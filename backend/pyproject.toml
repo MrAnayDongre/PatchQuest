@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "patchquest"
+version = "0.1.0"
+description = "Local-first agentic coding harness with deterministic orchestration, repo memory, and safety gates"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "aiosqlite>=0.19.0",
+    "pyyaml>=6.0",
+    "sse-starlette>=1.8.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+tree-sitter = [
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-rust>=0.23.0",
+    "tree-sitter-c>=0.23.0",
+    "tree-sitter-cpp>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+]
+caldav = [
+    "caldav>=1.3.0",
+]
+google-calendar = [
+    "google-api-python-client>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
+]
+all = [
+    "patchquest[tree-sitter,caldav,google-calendar]",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.25.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

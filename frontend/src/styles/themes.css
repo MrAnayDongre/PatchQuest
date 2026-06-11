@@ -1,0 +1,125 @@
+/* Lumina-inspired design tokens */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-void: #020617;
+  --bg-dark: #0a1224;
+  --bg-panel: rgba(10, 18, 36, 0.72);
+  --bg-panel-alt: rgba(14, 24, 48, 0.82);
+  --bg-elevated: rgba(18, 30, 58, 0.88);
+  --border-color: rgba(148, 163, 184, 0.14);
+  --border-glow: rgba(56, 189, 248, 0.22);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+
+  --accent-cyan: #7dd3fc;
+  --accent-cyan-dim: #38bdf8;
+  --accent-cyan-glow: rgba(125, 211, 252, 0.28);
+  --accent-icy: #e0f2fe;
+  --accent-violet: #93c5fd;
+  --accent-violet-glow: rgba(147, 197, 253, 0.15);
+  --accent-amber: #fbbf24;
+  --accent-yellow: #fcd34d;
+  --accent-green: #86efac;
+  --accent-green-glow: rgba(134, 239, 172, 0.2);
+  --accent-red: #f87171;
+  --accent-orange: #fb923c;
+
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-dim: #94a3b8;
+  --text-muted: #64748b;
+
+  --btn-primary-bg: #f8fafc;
+  --btn-primary-text: #0f172a;
+  --btn-primary-border: rgba(255, 255, 255, 0.92);
+  --btn-secondary-bg: rgba(15, 23, 42, 0.55);
+  --btn-secondary-text: #f8fafc;
+  --btn-secondary-border: rgba(148, 163, 184, 0.22);
+
+  --btn-bg: rgba(125, 211, 252, 0.06);
+  --btn-bg-hover: rgba(125, 211, 252, 0.12);
+  --input-bg: rgba(15, 23, 42, 0.65);
+
+  --shadow-panel: 0 8px 32px rgba(2, 6, 23, 0.45);
+  --shadow-soft: 0 16px 48px rgba(2, 6, 23, 0.55);
+  --overlay-backdrop: rgba(2, 6, 23, 0.78);
+
+  --gradient-hero: linear-gradient(180deg, #020617 0%, #0a1628 42%, #0c4a6e 100%);
+  --gradient-horizon: radial-gradient(ellipse 90% 55% at 50% 88%, rgba(56, 189, 248, 0.32), transparent 68%);
+
+  --game-canvas-bg: #071018;
+  --game-player: #7dd3fc;
+  --game-enemy: #93c5fd;
+  --game-accent: #fcd34d;
+  --game-danger: #f87171;
+  --game-success: #86efac;
+  --game-pipe: #86efac;
+  --game-star: #475569;
+
+  --halftone-opacity: 0.35;
+  --grid-opacity: 0;
+  --scanline-opacity: 0;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-void: #eef6ff;
+  --bg-dark: #e3effc;
+  --bg-panel: rgba(255, 255, 255, 0.78);
+  --bg-panel-alt: rgba(248, 250, 252, 0.92);
+  --bg-elevated: rgba(255, 255, 255, 0.95);
+  --border-color: rgba(15, 23, 42, 0.1);
+  --border-glow: rgba(14, 165, 233, 0.2);
+  --border-subtle: rgba(15, 23, 42, 0.06);
+
+  --accent-cyan: #0284c7;
+  --accent-cyan-dim: #0369a1;
+  --accent-cyan-glow: rgba(2, 132, 199, 0.18);
+  --accent-icy: #0c4a6e;
+  --accent-violet: #2563eb;
+  --accent-violet-glow: rgba(37, 99, 235, 0.12);
+  --accent-amber: #d97706;
+  --accent-yellow: #ca8a04;
+  --accent-green: #059669;
+  --accent-green-glow: rgba(5, 150, 105, 0.12);
+  --accent-red: #dc2626;
+  --accent-orange: #ea580c;
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-dim: #64748b;
+  --text-muted: #94a3b8;
+
+  --btn-primary-bg: #0f172a;
+  --btn-primary-text: #f8fafc;
+  --btn-primary-border: #0f172a;
+  --btn-secondary-bg: rgba(255, 255, 255, 0.85);
+  --btn-secondary-text: #0f172a;
+  --btn-secondary-border: rgba(15, 23, 42, 0.12);
+
+  --btn-bg: rgba(2, 132, 199, 0.06);
+  --btn-bg-hover: rgba(2, 132, 199, 0.12);
+  --input-bg: #ffffff;
+
+  --shadow-panel: 0 8px 28px rgba(15, 23, 42, 0.08);
+  --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.1);
+  --overlay-backdrop: rgba(238, 246, 255, 0.82);
+
+  --gradient-hero: linear-gradient(180deg, #eef6ff 0%, #dbeafe 50%, #bfdbfe 100%);
+  --gradient-horizon: radial-gradient(ellipse 90% 55% at 50% 88%, rgba(56, 189, 248, 0.22), transparent 68%);
+
+  --game-canvas-bg: #0f172a;
+  --game-player: #0284c7;
+  --game-enemy: #2563eb;
+  --game-accent: #ca8a04;
+  --game-danger: #dc2626;
+  --game-success: #059669;
+  --game-pipe: #059669;
+  --game-star: #94a3b8;
+
+  --halftone-opacity: 0.22;
+  --grid-opacity: 0;
+  --scanline-opacity: 0;
+}

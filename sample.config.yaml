@@ -1,0 +1,171 @@
+# PatchQuest Configuration
+# Copy to config.yaml and customize
+
+models:
+  intake:
+    provider: mock
+    model: mock-intake
+  planner:
+    provider: mock
+    model: mock-planner
+  coder:
+    provider: mock
+    model: mock-coder
+  reviewer:
+    provider: mock
+    model: mock-reviewer
+  security:
+    provider: mock
+    model: mock-security
+  memory_curator:
+    provider: mock
+    model: mock-memory
+
+# Example with real providers:
+# models:
+#   planner:
+#     provider: ollama
+#     model: qwen2.5-coder:0.5b
+#   coder:
+#     provider: openai_compatible
+#     base_url: http://localhost:8000/v1
+#     model: local-coder
+#     api_key_env: LOCAL_LLM_API_KEY
+#   reviewer:
+#     provider: openrouter
+#     model: anthropic/claude-haiku-4-5-20251001
+#     api_key_env: OPENROUTER_API_KEY
+
+# NVIDIA NIM / Build (Responses API):
+# Select provider=nvidia in the frontend launcher, or configure per-role:
+# models:
+#   coder:
+#     provider: nvidia
+#     model: openai/gpt-oss-120b
+#     api_key_env: NVIDIA_API_KEY
+#     base_url: https://integrate.api.nvidia.com/v1
+#     max_tokens: 4096
+#     temperature: 1
+# Note: NVIDIA uses the Responses API (/responses), not Chat Completions.
+# Set NVIDIA_API_KEY in your environment. Get a key at https://build.nvidia.com
+
+runtime:
+  default: local
+  docker:
+    image: patchquest-sandbox:latest
+    network: false
+    memory: 2g
+    cpus: 2
+    pids_limit: 512
+    timeout_seconds: 120
+    output_limit_bytes: 200000
+    cleanup: true
+    keep_on_failure: true
+
+scheduler:
+  enabled: true
+  poll_interval_seconds: 30
+  missed_run_grace_minutes: 60
+  max_concurrent_runs: 1
+
+safety:
+  allow_network: false
+  allow_outside_repo: false
+  max_command_timeout: 60
+  max_output_bytes: 1000000
+  require_approval_for_network: true
+  block_hardcoded_secrets: true
+  redact_secrets: true
+  blocked_paths:
+    - "~/.ssh"
+    - "~/.aws"
+    - "~/.gcp"
+    - "~/.azure"
+
+memory:
+  mode: repo  # off, session, repo, user
+  max_records: 10000
+
+# Web search configuration
+# PatchQuest can search the web for documentation, CVEs, and dependency info.
+# DuckDuckGo works without an API key (best-effort instant answers).
+# For full web results, configure a paid provider below.
+search:
+  enabled: true
+  default_provider: duckduckgo
+  cache_ttl_seconds: 3600
+  max_results: 8
+  allow_network: ask  # ask | always | never
+  providers:
+    brave:
+      enabled: false
+      api_key_env: BRAVE_SEARCH_API_KEY
+    tavily:
+      enabled: false
+      api_key_env: TAVILY_API_KEY
+    serper:
+      enabled: false
+      api_key_env: SERPER_API_KEY
+    serpapi:
+      enabled: false
+      api_key_env: SERPAPI_API_KEY
+    google_programmable:
+      enabled: false
+      api_key_env: GOOGLE_SEARCH_API_KEY
+      search_engine_id_env: GOOGLE_SEARCH_ENGINE_ID
+    duckduckgo:
+      enabled: true
+    custom:
+      enabled: false
+      base_url: ""
+      api_key_env: CUSTOM_SEARCH_API_KEY
+
+# Calendar configuration
+# Local calendar is SQLite-backed and always available.
+# ICS export creates .ics files for import into external calendars.
+# CalDAV, Google, and Microsoft require credentials (see README).
+calendar:
+  enabled: true
+  default_provider: local
+  default_calendar_id: patchquest
+  create_events_for_scheduled_tasks: true
+  avoid_busy_times: false
+  reminder_minutes_before: 10
+  providers:
+    local:
+      enabled: true
+    ics:
+      enabled: true
+      export_path: .patchquest/calendar/patchquest.ics
+    caldav:
+      enabled: false
+      url_env: CALDAV_URL
+      username_env: CALDAV_USERNAME
+      password_env: CALDAV_PASSWORD
+    google:
+      enabled: false
+      credentials_env: GOOGLE_CALENDAR_CREDENTIALS
+    microsoft:
+      enabled: false
+      client_id_env: MICROSOFT_CLIENT_ID
+      tenant_id_env: MICROSOFT_TENANT_ID
+
+# Repo intelligence — Tree-sitter-based code analysis
+# Tree-sitter provides accurate symbol extraction for supported languages.
+# Falls back to regex when Tree-sitter is unavailable for a language.
+repo_intelligence:
+  parser: tree_sitter  # tree_sitter | regex
+  regex_fallback: true
+  supported_languages:
+    - python
+    - javascript
+    - typescript
+    - rust
+    - c
+    - cpp
+    - go
+    - java
+
+db_path: patchquest.db
+host: "0.0.0.0"
+port: 8000

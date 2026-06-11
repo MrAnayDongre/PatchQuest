@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+backend/.venv/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+config.yaml
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# PatchQuest local runtime
+.patchquest/
+patchquest.db
+patchquest.db-shm
+patchquest.db-wal
+*.db-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Docker local overrides
+docker-compose.override.yml
+
+# Local screenshots (keep docs/assets/ committed assets only)
+*.png
+!docs/assets/*.png
