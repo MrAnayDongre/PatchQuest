@@ -41,21 +41,9 @@ Mock mode runs the entire pipeline with deterministic outputs, so you can evalua
 
 ## Architecture
 
-```
-┌─────────────────┐        SSE         ┌─────────────────────┐
-│    Frontend      │◄──────────────────►│      Backend         │
-│  React + Vite    │     REST           │  FastAPI + SQLite    │
-└─────────────────┘                    └──────────┬────────────┘
-                                                │
-              ┌─────────────────────────────────┼─────────────────────────┐
-              │                                 │                         │
-       ┌──────▼──────┐                  ┌───────▼───────┐         ┌───────▼───────┐
-       │ Orchestrator │                  │    Agents      │         │    Tools       │
-       │ State machine│                  │  Provider layer│         │  SecretGuard   │
-       │  Event bus   │                  │  Role prompts  │         │  Command risk  │
-       └──────────────┘                  └───────────────┘         │  Patch / git   │
-                                                                   └───────────────┘
-```
+![PatchQuest architecture](docs/assets/architecture.png)
+
+PatchQuest separates the mission-control UI, deterministic backend orchestration, provider layer, safety tools, repo intelligence, runtime sandboxing, and persistence into independently testable modules.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module-level detail.
 
