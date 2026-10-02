@@ -38,10 +38,12 @@ async def probe_endpoint(base_url: str, api_key_env: str | None = None, timeout:
         if resp.status_code != 200:
             return {"ok": False, "url": url, "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}", "models": []}
         data = resp.json().get("data") or []
+        by_model = {m["id"]: c for m in data if m.get("id") and (c := _context_length(m))}
         return {
             "ok": True, "url": url, "latency_ms": latency_ms,
             "models": [m.get("id") for m in data if m.get("id")],
-            "context_length": next((c for c in (_context_length(m) for m in data) if c), None),
+            "context_length": next(iter(by_model.values()), None),
+            "context_by_model": by_model,
         }
     except (httpx.HTTPError, ValueError) as exc:
         return {"ok": False, "url": url, "latency_ms": None, "error": f"{type(exc).__name__}: {exc}", "models": []}

@@ -12,6 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from patchquest.agents.budget import (
+    context_limit,
+    effective_max_tokens,
+    fit_text,
+    is_context_overflow,
+    prompt_budget_chars,
+)
 from patchquest.agents.prompts import (
     ANALYSIS_SYSTEM,
     CONTEXT_BUILDER_SYSTEM,  # noqa: F401  (kept for importers)
@@ -171,11 +178,16 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
         raise RuntimeError(f"Provider '{model_config.provider}' configuration error: {err}")
     _charge_budget(ctx)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-        *(extra_messages or []),
-    ]
+    limit = await context_limit(model_config)
+    if limit:
+        model_config.max_tokens = effective_max_tokens(model_config, limit)
+
+    def build(shrink: float) -> list[dict[str, str]]:
+        content = fit_text(user_content, prompt_budget_chars(limit, model_config.max_tokens, system_prompt, shrink)) if limit else user_content
+        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": content}, *(extra_messages or [])]
+
+    messages = build(1.0)
+    shrink, overflow_retries = 1.0, 0
     response_format = _response_format(provider, model_config, schema) if constrain else None
     started_at, t0 = now_iso(), time.monotonic()
 
@@ -185,6 +197,8 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
             response = await provider.complete(messages, model_config, response_format)
             if degraded_note:
                 response.degraded.append(degraded_note)
+            if overflow_retries:
+                response.degraded.append("context_shrunk")
             call_id = await asyncio.to_thread(
                 _record, ctx, role_name, model_config.provider, model_config.model, messages, started_at,
                 int((time.monotonic() - t0) * 1000), response, "ok")
@@ -198,6 +212,15 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
             raise
         except Exception as exc:
             last = exc
+            http = getattr(exc, "response", None)
+            if http is not None and overflow_retries < 2 and is_context_overflow(http.status_code, http.text):
+                # The endpoint says the prompt did not fit: halve what we send and try again (bounded).
+                overflow_retries += 1
+                shrink *= 0.5
+                limit = limit or 4096
+                messages = build(shrink)
+                logger.warning("role=%s prompt exceeded the context window; shrinking to %.0f%%", role_name, shrink * 100)
+                continue
             if attempt + 1 < MAX_ATTEMPTS and _is_transient(exc):
                 delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
                 logger.warning("role=%s transient provider error (%s); retry in %.1fs", role_name, exc, delay)
