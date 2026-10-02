@@ -117,8 +117,9 @@ class TestHttpBoundary:
 
     @pytest.mark.asyncio
     async def test_run_lifecycle_cleans_up_and_supports_cancel(self, tmp_path):
-        from patchquest.api import routes_runs
+        from patchquest.application import get_service
 
+        service = get_service()
         repo = tmp_path / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# r\n")
@@ -128,10 +129,10 @@ class TestHttpBoundary:
             assert r.status_code == 200
             run_id = r.json()["id"]
             for _ in range(200):
-                if run_id not in routes_runs._active_machines:
+                if not service.is_active(run_id):
                     break
                 await asyncio.sleep(0.05)
-            assert run_id not in routes_runs._active_machines and run_id not in routes_runs._run_tasks
+            assert not service.is_active(run_id) and run_id not in service._tasks
             assert (await c.post(f"/api/runs/{run_id}/cancel")).status_code == 409  # finished: nothing to cancel
 
 

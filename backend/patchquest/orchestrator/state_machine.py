@@ -626,9 +626,10 @@ class RunStateMachine:
                     status: str | None = None, message: str | None = None,
                     payload: dict[str, Any] | None = None) -> None:
         with get_db() as conn:
-            insert_event(conn, self.run_id, event_type, phase, status, message, payload)
+            event_id = insert_event(conn, self.run_id, event_type, phase, status, message, payload)
 
         event = {
+            "id": event_id,
             "type": event_type,
             "run_id": self.run_id,
             "phase": phase,

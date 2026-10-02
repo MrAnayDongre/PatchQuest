@@ -18,6 +18,9 @@ dependencies = [
     "httpx>=0.25.0",
 ]
 
+[project.scripts]
+patchquest = "patchquest.cli:main"
+
 [project.optional-dependencies]
 tree-sitter = [
     "tree-sitter>=0.23.0",

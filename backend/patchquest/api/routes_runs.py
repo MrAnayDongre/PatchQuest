@@ -1,202 +1,101 @@
-"""Run management API routes."""
+"""Run management API routes (thin adapter over :class:`TaskService`)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from patchquest.api.schemas import (
-    ApprovalAction,
-    CreateRunRequest,
-    RunEventResponse,
-    RunResponse,
-)
-from patchquest.database import get_db, insert_event, now_iso
-from patchquest.orchestrator.event_bus import event_bus
-from patchquest.orchestrator.state_machine import RunStateMachine
-from patchquest.security import RepoPathError, validate_repo_path
+from patchquest.api.schemas import ApprovalAction, CreateRunRequest, RunEventResponse, RunResponse
+from patchquest.application import get_service
+from patchquest.application.service import RunNotActive, RunNotFound
+from patchquest.security import RepoPathError
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
-_active_machines: dict[str, RunStateMachine] = {}
-_run_tasks: dict[str, asyncio.Task] = {}  # strong references: a bare create_task() can be garbage-collected mid-run
 
-
-def _launch(run_id: str, machine: RunStateMachine) -> None:
-    _active_machines[run_id] = machine
-    task = asyncio.get_running_loop().create_task(machine.execute())
-    _run_tasks[run_id] = task
-
-    def _done(_t: asyncio.Task) -> None:
-        _active_machines.pop(run_id, None)
-        _run_tasks.pop(run_id, None)
-
-    task.add_done_callback(_done)
-
-
-def _row_to_response(r: Any) -> RunResponse:
-    """Convert a sqlite3.Row to RunResponse, handling missing columns from old DBs."""
-    keys = r.keys() if hasattr(r, "keys") else []
+def _to_response(r: dict[str, Any]) -> RunResponse:
     return RunResponse(
-        id=r["id"],
-        repo_path=r["repo_path"],
-        task=r["task"],
-        status=r["status"],
-        current_phase=r["current_phase"],
-        provider=r["provider"] if "provider" in keys else "mock",
-        model=r["model"] if "model" in keys else None,
-        runtime_mode=r["runtime_mode"] if "runtime_mode" in keys else "local",
-        model_profile=r["model_profile"],
-        memory_mode=r["memory_mode"],
-        allow_network=bool(r["allow_network"]),
-        dry_run=bool(r["dry_run"]),
-        created_at=r["created_at"],
-        updated_at=r["updated_at"],
-        completed_at=r["completed_at"],
+        id=r["id"], repo_path=r["repo_path"], task=r["task"], status=r["status"],
+        current_phase=r.get("current_phase"), provider=r.get("provider") or "mock", model=r.get("model"),
+        runtime_mode=r.get("runtime_mode") or "local", model_profile=r.get("model_profile"),
+        memory_mode=r.get("memory_mode"), allow_network=bool(r.get("allow_network")),
+        dry_run=bool(r.get("dry_run")), created_at=r["created_at"], updated_at=r["updated_at"],
+        completed_at=r.get("completed_at"),
     )
 
 
 @router.post("", response_model=RunResponse)
 async def create_run(req: CreateRunRequest) -> RunResponse:
+    service = get_service()
     try:
-        repo_path = validate_repo_path(req.repo_path)
+        run = service.create_run(
+            repo_path=req.repo_path, task=req.task, provider=req.provider or "mock", model=req.model,
+            runtime_mode=req.runtime_mode or "local", model_profile=req.model_profile,
+            memory_mode=req.memory_mode or "repo", allow_network=req.allow_network, dry_run=req.dry_run,
+        )
     except RepoPathError as exc:
         raise HTTPException(400, str(exc)) from exc
-    req = req.model_copy(update={"repo_path": repo_path})
-    run_id = str(uuid.uuid4())
-    now = now_iso()
-
-    provider = req.provider or "mock"
-    model = req.model
-    runtime_mode = req.runtime_mode or "local"
-
-    with get_db() as conn:
-        conn.execute(
-            """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile,
-               memory_mode, runtime_mode, allow_network, dry_run, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, req.repo_path, req.task, "created", provider, model,
-             req.model_profile, req.memory_mode or "repo", runtime_mode,
-             int(req.allow_network), int(req.dry_run), now, now),
-        )
-        insert_event(conn, run_id, "run_created", message=f"Run created: {req.task[:100]}")
-
-    machine = RunStateMachine(
-        run_id, req.repo_path, req.task,
-        provider=provider, model=model, runtime_mode=runtime_mode,
-        dry_run=req.dry_run,
-    )
-    _launch(run_id, machine)
-
-    return RunResponse(
-        id=run_id,
-        repo_path=req.repo_path,
-        task=req.task,
-        status="created",
-        provider=provider,
-        model=model,
-        runtime_mode=runtime_mode,
-        model_profile=req.model_profile,
-        memory_mode=req.memory_mode or "repo",
-        allow_network=req.allow_network,
-        dry_run=req.dry_run,
-        created_at=now,
-        updated_at=now,
-    )
+    service.launch(run["id"])
+    return _to_response(run)
 
 
 @router.get("", response_model=list[RunResponse])
 async def list_runs() -> list[RunResponse]:
-    with get_db() as conn:
-        rows = conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT 50").fetchall()
-
-    return [_row_to_response(r) for r in rows]
+    return [_to_response(r) for r in get_service().list_runs(50)]
 
 
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str) -> RunResponse:
-    with get_db() as conn:
-        r = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    if not r:
-        raise HTTPException(404, "Run not found")
-    return _row_to_response(r)
+    try:
+        return _to_response(get_service().get_run(run_id))
+    except RunNotFound:
+        raise HTTPException(404, "Run not found") from None
 
 
 @router.get("/{run_id}/events", response_model=list[RunEventResponse])
-async def get_events(run_id: str) -> list[RunEventResponse]:
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM run_events WHERE run_id = ? ORDER BY id", (run_id,)
-        ).fetchall()
-
-    return [
-        RunEventResponse(
-            id=r["id"],
-            run_id=r["run_id"],
-            type=r["type"],
-            phase=r["phase"],
-            status=r["status"],
-            message=r["message"],
-            payload=json.loads(r["payload_json"]) if r["payload_json"] else None,
-            created_at=r["created_at"],
-        )
-        for r in rows
-    ]
+async def get_events(run_id: str, after_id: int = Query(0, ge=0)) -> list[RunEventResponse]:
+    try:
+        events = get_service().events(run_id, after_id)
+    except RunNotFound:
+        raise HTTPException(404, "Run not found") from None
+    return [RunEventResponse(id=e["id"], run_id=e["run_id"], type=e["type"], phase=e["phase"], status=e["status"],
+                             message=e["message"], payload=e["payload"], created_at=e["created_at"]) for e in events]
 
 
 @router.get("/{run_id}/stream")
-async def stream_events(run_id: str) -> EventSourceResponse:
+async def stream_events(run_id: str, after_id: int = Query(0, ge=0)) -> EventSourceResponse:
+    service = get_service()
+    try:
+        service.get_run(run_id)
+    except RunNotFound:
+        raise HTTPException(404, "Run not found") from None
+
     async def generate():
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        event_bus.subscribe(run_id, queue)
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    yield {"event": event["type"], "data": json.dumps(event)}
-                    if event["type"] in ("run_completed", "run_failed"):
-                        break
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": "{}"}
-        finally:
-            event_bus.unsubscribe(run_id, queue)
+        async for event in service.stream(run_id, after_id):
+            yield {"event": event["type"], "id": str(event.get("id", "")), "data": json.dumps(event)}
 
     return EventSourceResponse(generate())
 
 
 @router.post("/{run_id}/approve")
 async def approve_action(run_id: str, action: ApprovalAction) -> dict[str, str]:
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE approvals SET status = ?, note = ?, resolved_at = ? WHERE id = ? AND run_id = ?",
-            ("approved" if action.approved else "rejected", action.note, now_iso(),
-             action.approval_id, run_id),
-        )
-        event_type = "permission_approved" if action.approved else "permission_rejected"
-        insert_event(conn, run_id, event_type, message=f"Approval {action.approval_id}: {action.approved}")
-
-    machine = _active_machines.get(run_id)
-    if machine:
-        await machine.resolve_approval(action.approval_id, action.approved)
-
+    await get_service().approve(run_id, action.approval_id, action.approved, action.note)
     return {"status": "ok"}
-
-
-@router.post("/{run_id}/cancel")
-async def cancel_run(run_id: str) -> dict[str, str]:
-    machine = _active_machines.get(run_id)
-    if machine is None:
-        raise HTTPException(409, "Run is not active")
-    machine.cancel()
-    return {"status": "cancelling"}
 
 
 @router.post("/{run_id}/reject")
 async def reject_action(run_id: str, action: ApprovalAction) -> dict[str, str]:
     action.approved = False
     return await approve_action(run_id, action)
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_run(run_id: str) -> dict[str, str]:
+    try:
+        get_service().cancel(run_id)
+    except RunNotActive:
+        raise HTTPException(409, "Run is not active") from None
+    return {"status": "cancelling"}
