@@ -126,3 +126,15 @@ class TestExecutor:
     def test_nonzero_exit_reported(self, tmp_path):
         res = run_argv([sys.executable, "-c", "import sys;sys.exit(3)"], str(tmp_path))
         assert res["returncode"] == 3 and not res["success"]
+
+
+def test_executor_disables_bytecode_so_same_second_edits_are_never_stale(tmp_path):
+    """Regression: an edit with the same size within one second ran stale .pyc and failed validation."""
+    mod = tmp_path / "m.py"
+    mod.write_text("def f():\n    return 1\n")
+    code = "import m; print(m.f())"
+    first = run_argv([sys.executable, "-c", code], str(tmp_path), env=scrubbed_env())
+    mod.write_text("def f():\n    return 2\n")  # same length, same second
+    second = run_argv([sys.executable, "-c", code], str(tmp_path), env=scrubbed_env())
+    assert first["stdout"].strip() == "1" and second["stdout"].strip() == "2"
+    assert not (tmp_path / "__pycache__").exists()

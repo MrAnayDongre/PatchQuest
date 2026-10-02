@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
+
+
+def _python() -> str:
+    """`python` is absent on many modern systems that only ship `python3`."""
+    return "python" if shutil.which("python") else "python3"
 
 
 def detect_test_commands(repo_path: str) -> list[str]:
@@ -12,7 +18,7 @@ def detect_test_commands(repo_path: str) -> list[str]:
     root = Path(repo_path)
 
     if (root / "pyproject.toml").exists() or (root / "pytest.ini").exists():
-        commands.append("python -m pytest --tb=short -q")
+        commands.append(f"{_python()} -m pytest --tb=short -q")
 
     if (root / "tox.ini").exists():
         commands.append("tox")

@@ -206,6 +206,7 @@ def build_docker_command(
         "--memory", memory,
         "--cpus", cpus,
         "--pids-limit", pids_limit,
+        "-e", "PYTHONDONTWRITEBYTECODE=1",
         "-v", f"{workspace}:/workspace",
         "-w", "/workspace",
     ]

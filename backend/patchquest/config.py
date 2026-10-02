@@ -131,15 +131,29 @@ class RepoIntelligenceConfig(BaseModel):
     ])
 
 
+class AgentConfig(BaseModel):
+    """Bounds on autonomous behaviour. Every loop in the engine reads its limit from here."""
+
+    max_repair_rounds: int = 2
+    max_test_commands: int = 3
+    max_check_commands: int = 3
+    context_budget_tokens: int = 6000
+    # on_green: promote only when validation passed (or there was nothing to run); otherwise ask a human.
+    # on_no_regression: also promote when the only remaining failures already fail without the patch.
+    # always: promote regardless. never: leave the diff for review.
+    promote_policy: str = "on_green"
+
+
 class AppConfig(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     repo_intelligence: RepoIntelligenceConfig = Field(default_factory=RepoIntelligenceConfig)
     db_path: str = "patchquest.db"
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
 
 

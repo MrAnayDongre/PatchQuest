@@ -59,6 +59,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("provider", "TEXT DEFAULT 'mock'"),
         ("model", "TEXT"),
         ("runtime_mode", "TEXT DEFAULT 'local'"),
+        ("outcome", "TEXT"),
+        ("verdict", "TEXT"),
     ]
     for col_name, col_def in migrations:
         if col_name not in existing:
@@ -90,7 +92,9 @@ CREATE TABLE IF NOT EXISTS runs (
     dry_run INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    outcome TEXT,
+    verdict TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run_events (

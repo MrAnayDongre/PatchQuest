@@ -11,6 +11,7 @@ from patchquest.agents.providers_ollama import OllamaProvider
 from patchquest.agents.providers_openai import OpenAIProvider
 from patchquest.agents.providers_openai_compatible import OpenAICompatibleProvider
 from patchquest.agents.providers_openrouter import OpenRouterProvider
+from patchquest.agents.providers_scripted import ScriptedProvider
 
 PROVIDERS: dict[str, type[ProviderBase]] = {
     "mock": MockProvider,
@@ -21,6 +22,7 @@ PROVIDERS: dict[str, type[ProviderBase]] = {
     "nvidia": NvidiaProvider,
     "openrouter": OpenRouterProvider,
     "openai_compatible": OpenAICompatibleProvider,
+    "scripted": ScriptedProvider,  # deterministic replay for tests, evaluation and demos
 }
 
 

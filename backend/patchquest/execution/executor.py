@@ -39,6 +39,9 @@ def scrubbed_env(extra: dict[str, str] | None = None, passthrough: tuple[str, ..
         if any(fnmatch.fnmatchcase(name, pattern) for pattern in allow):
             env[name] = value
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    # Validation re-runs the same files right after edits. Python's pyc check compares whole-second
+    # mtime and size, so a same-size edit within one second would silently run stale bytecode.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     if extra:
         env.update(extra)
     return env

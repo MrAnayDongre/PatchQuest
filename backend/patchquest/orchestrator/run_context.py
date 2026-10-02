@@ -139,3 +139,12 @@ class RunContext:
     approvals: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
+    # --- validated-patch pipeline ---
+    context_provenance: list[dict[str, Any]] = field(default_factory=list)
+    patch_summary: list[dict[str, Any]] = field(default_factory=list)  # per-file action/added/removed
+    repair_rounds: int = 0
+    baseline_results: list[dict[str, Any]] = field(default_factory=list)
+    verdict: str | None = None  # passed | failed | no_tests | pre_existing_failure
+    outcome: str | None = None  # applied | rejected | conflict | no_changes | read_only | blocked
+    review: dict[str, Any] | None = None
+    workspace_path: str | None = None

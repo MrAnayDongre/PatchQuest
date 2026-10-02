@@ -2,158 +2,123 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from patchquest.agents.prompts import (
     ANALYSIS_SYSTEM,
-    CONTEXT_BUILDER_SYSTEM,
+    CONTEXT_BUILDER_SYSTEM,  # noqa: F401  (kept for importers)
     INTAKE_SYSTEM,
     PATCH_SYSTEM,
     PLANNER_SYSTEM,
+    REPAIR_SYSTEM,
     REVIEWER_SYSTEM,
-    SECURITY_SYSTEM,
+    SECURITY_SYSTEM,  # noqa: F401
 )
 from patchquest.agents.provider_base import ModelConfig
 from patchquest.agents.provider_registry import get_provider
 from patchquest.config import get_config
+from patchquest.context import build_context, render_context
 from patchquest.orchestrator.run_context import RunContext
+from patchquest.tools.secret_guard import redact_secrets
 
 logger = logging.getLogger(__name__)
 
+# Transient failures are retried with exponential backoff; everything else fails immediately.
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = (0.5, 1.5)
+RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
-async def _call_role(
-    role_name: str,
-    system_prompt: str,
-    user_content: str,
-    ctx: RunContext | None = None,
-) -> dict[str, Any]:
-    from patchquest.api.routes_providers import PROVIDER_CATALOG
 
+def _resolve_model(role_name: str, ctx: RunContext | None):
+    """Return ``(provider, ModelConfig)`` for a role, honouring the run's provider choice."""
     run_provider = ctx.provider if ctx else None
     run_model = ctx.model if ctx else None
 
     if run_provider and run_provider != "mock":
+        from patchquest.api.routes_providers import PROVIDER_CATALOG
+
         catalog = next((p for p in PROVIDER_CATALOG if p["name"] == run_provider), None)
-        provider = get_provider(run_provider)
-        max_tokens = 4096 if run_provider == "nvidia" else 2048
-        temperature = 1.0 if run_provider == "nvidia" else 0.2
-        top_p = 1.0 if run_provider == "nvidia" else None
-        model_config = ModelConfig(
+        nvidia = run_provider == "nvidia"
+        return get_provider(run_provider), ModelConfig(
             provider=run_provider,
             model=run_model or (catalog["default_model"] if catalog else ""),
             base_url=catalog.get("base_url") if catalog else None,
             api_key_env=catalog.get("api_key_env") if catalog else None,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
+            max_tokens=4096 if nvidia else 2048,
+            temperature=1.0 if nvidia else 0.2,
+            top_p=1.0 if nvidia else None,
         )
-    else:
-        config = get_config()
-        model_profile = getattr(config.models, role_name, config.models.intake)
-        provider = get_provider(model_profile.provider)
-        model_config = ModelConfig(
-            provider=model_profile.provider,
-            model=model_profile.model,
-            base_url=model_profile.base_url,
-            api_key_env=model_profile.api_key_env,
-            max_tokens=model_profile.max_tokens,
-            temperature=model_profile.temperature,
-        )
+
+    config = get_config()
+    profile = getattr(config.models, role_name, config.models.intake)
+    return get_provider(profile.provider), ModelConfig(
+        provider=profile.provider,
+        model=profile.model,
+        base_url=profile.base_url,
+        api_key_env=profile.api_key_env,
+        max_tokens=profile.max_tokens,
+        temperature=profile.temperature,
+    )
+
+
+def _is_transient(exc: BaseException) -> bool:
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover
+        return False
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in RETRYABLE_STATUS
+    return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
+
+
+async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None) -> str:
+    provider, model_config = _resolve_model(role_name, ctx)
 
     valid, err = provider.validate_config(model_config)
     if not valid:
-        raise RuntimeError(
-            f"Provider '{model_config.provider}' configuration error: {err}"
-        )
+        raise RuntimeError(f"Provider '{model_config.provider}' configuration error: {err}")
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
 
-    try:
-        response = await provider.complete(messages, model_config)
-    except Exception as exc:
-        import os
-        err_msg = str(exc)
-        if model_config.api_key_env:
-            key_val = os.environ.get(model_config.api_key_env, "")
-            if key_val:
-                err_msg = err_msg.replace(key_val, "***REDACTED***")
-        raise RuntimeError(
-            f"LLM provider '{model_config.provider}' call failed: {err_msg}"
-        ) from exc
+    last: BaseException | None = None
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            response = await provider.complete(messages, model_config)
+            return response.content or ""
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - re-raised below with context
+            last = exc
+            if attempt + 1 < MAX_ATTEMPTS and _is_transient(exc):
+                delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
+                logger.warning("role=%s transient provider error (%s); retry in %.1fs", role_name, exc, delay)
+                await asyncio.sleep(delay)
+                continue
+            break
 
-    return _parse_json_response(response.content)
+    assert last is not None
+    message = str(last)
+    if model_config.api_key_env:
+        key_value = os.environ.get(model_config.api_key_env, "")
+        if key_value:
+            message = message.replace(key_value, "***REDACTED***")
+    raise RuntimeError(f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}") from last
 
 
-async def _call_role_text(
-    role_name: str,
-    system_prompt: str,
-    user_content: str,
-    ctx: RunContext | None = None,
-) -> str:
+async def _call_role(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None) -> dict[str, Any]:
+    return _parse_json_response(await _complete(role_name, system_prompt, user_content, ctx))
+
+
+async def _call_role_text(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None) -> str:
     """Call an LLM role and return raw text (no JSON parsing)."""
-    from patchquest.api.routes_providers import PROVIDER_CATALOG
-
-    run_provider = ctx.provider if ctx else None
-    run_model = ctx.model if ctx else None
-
-    if run_provider and run_provider != "mock":
-        catalog = next((p for p in PROVIDER_CATALOG if p["name"] == run_provider), None)
-        provider = get_provider(run_provider)
-        max_tokens = 4096 if run_provider == "nvidia" else 2048
-        temperature = 1.0 if run_provider == "nvidia" else 0.2
-        top_p = 1.0 if run_provider == "nvidia" else None
-        model_config = ModelConfig(
-            provider=run_provider,
-            model=run_model or (catalog["default_model"] if catalog else ""),
-            base_url=catalog.get("base_url") if catalog else None,
-            api_key_env=catalog.get("api_key_env") if catalog else None,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-        )
-    else:
-        config = get_config()
-        model_profile = getattr(config.models, role_name, config.models.intake)
-        provider = get_provider(model_profile.provider)
-        model_config = ModelConfig(
-            provider=model_profile.provider,
-            model=model_profile.model,
-            base_url=model_profile.base_url,
-            api_key_env=model_profile.api_key_env,
-            max_tokens=model_profile.max_tokens,
-            temperature=model_profile.temperature,
-        )
-
-    valid, err = provider.validate_config(model_config)
-    if not valid:
-        raise RuntimeError(
-            f"Provider '{model_config.provider}' configuration error: {err}"
-        )
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-    ]
-
-    try:
-        response = await provider.complete(messages, model_config)
-    except Exception as exc:
-        import os
-        err_msg = str(exc)
-        if model_config.api_key_env:
-            key_val = os.environ.get(model_config.api_key_env, "")
-            if key_val:
-                err_msg = err_msg.replace(key_val, "***REDACTED***")
-        raise RuntimeError(
-            f"LLM provider '{model_config.provider}' call failed: {err_msg}"
-        ) from exc
-
-    return (response.content or "").strip()
+    return (await _complete(role_name, system_prompt, user_content, ctx)).strip()
 
 
 def _parse_json_response(content: str) -> dict[str, Any]:
@@ -184,15 +149,16 @@ async def run_planner_role(ctx: RunContext) -> dict[str, Any]:
 
 
 async def run_context_builder(ctx: RunContext) -> dict[str, Any]:
+    """Deterministic context selection from real files (no model call; see patchquest.context)."""
     from patchquest.memory.repo_map import get_repo_map
-    repo_map = get_repo_map(ctx.repo_path)
-    file_summary = "\n".join(f["file_path"] for f in repo_map["files"][:50])
-    try:
-        plan_str = json.dumps(ctx.plan, default=str)
-    except (TypeError, ValueError):
-        plan_str = str(ctx.plan)[:2000]
-    user_content = f"Task: {ctx.task}\nPlan: {plan_str}\nFiles:\n{file_summary}"
-    return await _call_role("planner", CONTEXT_BUILDER_SYSTEM, user_content, ctx=ctx)
+
+    planned = list(ctx.selected_files or [])
+    items = build_context(ctx.repo_path, ctx.task, get_repo_map(ctx.repo_path), planned)
+    return {
+        "selected_files": [i.path for i in items],
+        "context": {i.path: i.content for i in items},
+        "provenance": [i.provenance() for i in items],
+    }
 
 
 async def run_analysis_role(ctx: RunContext) -> str:
@@ -231,18 +197,47 @@ async def run_patch_role(ctx: RunContext) -> dict[str, Any]:
         if exact_patch is not None:
             return exact_patch
 
-    context_summary = ""
     selected = ctx.selected_context if isinstance(ctx.selected_context, dict) else {}
-    for path, content in list(selected.items())[:5]:
-        context_summary += f"\n--- {path} ---\n{str(content)[:2000]}\n"
-    user_content = f"Task: {ctx.task}\nContext:{context_summary}"
+    files = "\n".join(
+        f'<file path="{path}">\n{str(content)[:8000]}\n</file>' for path, content in list(selected.items())[:8]
+    ) or "(no files selected)"
+    user_content = f"Task: {ctx.task}\n\nRepository files:\n{files}"
     return await _call_role("coder", PATCH_SYSTEM, user_content, ctx=ctx)
 
 
-def _build_readme_sentence_patch(repo_path: str, task: str) -> dict[str, Any] | None:
-    """Build a deterministic README insert diff when task requests an exact sentence."""
-    import os
+async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], workspace_path: str, attempt: int) -> dict[str, Any]:
+    """Ask the coder to fix a change that failed validation, using fresh file contents."""
+    from patchquest.memory.repo_map import get_repo_map
 
+    def describe(f: dict[str, Any]) -> str:
+        cls = f.get("classification") or {}
+        attribution = ""
+        if cls:
+            attribution = (
+                f"NEW failures (caused by the change): {cls.get('new') or 'none'}\n"
+                f"Failures that ALSO occur without the change: {cls.get('preexisting') or 'none'}\n"
+            )
+        return (
+            f"$ {f.get('command')}\n(exit {f.get('returncode')})\n{attribution}"
+            f"{redact_secrets((f.get('stdout') or '')[-3000:])}\n{redact_secrets((f.get('stderr') or '')[-3000:])}"
+        )
+
+    failure_text = "\n\n".join(describe(f) for f in failures)
+    items = build_context(
+        workspace_path, ctx.task, get_repo_map(ctx.repo_path), list(ctx.applied_files or []),
+        failure_text=failure_text, budget_tokens=5000,
+    )
+    user_content = (
+        f"Task: {ctx.task}\nRepair attempt {attempt}.\n\n"
+        f"Current diff:\n{(ctx.proposed_diff or '')[:6000]}\n\n"
+        f"Failing commands:\n<output>\n{failure_text}\n</output>\n\n"
+        f"Current repository files:\n{render_context(items)}"
+    )
+    return await _call_role("coder", REPAIR_SYSTEM, user_content, ctx=ctx)
+
+
+def _build_readme_sentence_patch(repo_path: str, task: str) -> dict[str, Any] | None:
+    """Deterministic edit for tasks that ask to add an exact quoted sentence to README.md."""
     from patchquest.orchestrator.run_context import extract_quoted_sentence
 
     if "exactly this sentence" not in task.lower() and not extract_quoted_sentence(task):
@@ -251,39 +246,28 @@ def _build_readme_sentence_patch(repo_path: str, task: str) -> dict[str, Any] | 
     readme_path = os.path.join(repo_path, "README.md")
     if not os.path.isfile(readme_path):
         return None
-
     sentence = extract_quoted_sentence(task)
     if not sentence:
         return None
 
     with open(readme_path) as f:
-        lines = f.readlines()
-
+        lines = f.read().split("\n")
     if any(sentence in line for line in lines):
-        return {
-            "diff": "",
-            "rationale": "Requested sentence already present in README.md",
-            "files_changed": [],
-            "tests_to_run": [],
-        }
+        return {"edits": [], "create": [], "delete": [], "tests_to_run": [],
+                "rationale": "Requested sentence already present in README.md"}
 
-    insert_after = min(1, len(lines))
-    anchor = lines[insert_after - 1] if insert_after > 0 else ""
-    diff = (
-        "--- a/README.md\n"
-        "+++ b/README.md\n"
-        f"@@ -{insert_after},1 +{insert_after},2 @@\n"
-        f" {anchor.rstrip()}\n"
-        f"+{sentence}\n"
-    )
-    return {
-        "diff": diff,
-        "rationale": "Insert the exact requested sentence into README.md after the title line.",
-        "files_changed": ["README.md"],
-        "tests_to_run": [],
-    }
+    title = lines[0] if lines else ""
+    edit = {"path": "README.md", "search": title, "replace": f"{title}\n{sentence}"} if title else None
+    if edit is None:
+        return {"edits": [], "create": [{"path": "README.md", "content": sentence + "\n"}], "delete": [],
+                "tests_to_run": [], "rationale": "README.md is empty; add the requested sentence."}
+    return {"edits": [edit], "create": [], "delete": [], "tests_to_run": [],
+            "rationale": "Insert the exact requested sentence into README.md after the title line."}
 
 
 async def run_reviewer_role(ctx: RunContext) -> dict[str, Any]:
-    user_content = f"Task: {ctx.task}\nDiff: {ctx.proposed_diff or 'No changes'}\nFiles: {ctx.applied_files}"
+    user_content = (
+        f"Task: {ctx.task}\nDiff:\n<output>\n{ctx.proposed_diff or 'No changes'}\n</output>\n"
+        f"Files: {ctx.applied_files}\nValidation verdict: {getattr(ctx, 'verdict', 'unknown')}"
+    )
     return await _call_role("reviewer", REVIEWER_SYSTEM, user_content, ctx=ctx)

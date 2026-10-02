@@ -7,8 +7,10 @@ planned against. Local and Docker runtimes both execute inside this directory.
 
 from __future__ import annotations
 
+import difflib
 import os
 import shutil
+import stat
 from pathlib import Path
 
 from patchquest.memory.repo_indexer import IGNORED_DIRS
@@ -38,9 +40,15 @@ def copy_repo(source: Path, dest: Path) -> int:
         (dest / rel_dir).mkdir(parents=True, exist_ok=True)
         for name in filenames:
             src = Path(dirpath) / name
-            if src.is_symlink() or is_secret_file(name):
+            if is_secret_file(name):
                 continue
-            total += src.stat().st_size
+            try:
+                mode = os.lstat(src).st_mode
+            except OSError:
+                continue
+            if not stat.S_ISREG(mode):  # symlinks, sockets, FIFOs, devices are never copied
+                continue
+            total += os.lstat(src).st_size
             if total > MAX_COPY_BYTES:
                 raise RuntimeError(f"repository is larger than {MAX_COPY_BYTES // 2**20} MiB; refusing to copy")
             shutil.copy2(src, dest / rel_dir / name)
@@ -94,6 +102,34 @@ class ShadowWorkspace:
 
     def restore_base(self) -> None:
         self.restore(self.base)
+
+    def diff(self) -> str:
+        """Unified diff of every touched file: original (base) -> current workspace state."""
+        parts: list[str] = []
+        for rel in self.touched:
+            old, new = self.base[rel], self._read(rel)
+            if old == new:
+                continue
+            old_l = (old or b"").decode("utf-8", "replace").split("\n") if old else []
+            new_l = (new or b"").decode("utf-8", "replace").split("\n") if new else []
+            parts.append("\n".join(difflib.unified_diff(
+                old_l, new_l, f"a/{rel}" if old is not None else "/dev/null",
+                f"b/{rel}" if new is not None else "/dev/null", lineterm="",
+            )))
+        return "\n".join(parts) + ("\n" if parts else "")
+
+    def summary(self) -> list[dict]:
+        out = []
+        for rel in self.touched:
+            old, new = self.base[rel], self._read(rel)
+            if old == new:
+                continue
+            action = "create" if old is None else "delete" if new is None else "modify"
+            old_l = set((old or b"").decode("utf-8", "replace").split("\n"))
+            new_l = (new or b"").decode("utf-8", "replace").split("\n")
+            added = sum(1 for ln in new_l if ln not in old_l)
+            out.append({"path": rel, "action": action, "added": added})
+        return out
 
     # --- promotion -------------------------------------------------------
     def promote(self) -> PatchResult:
