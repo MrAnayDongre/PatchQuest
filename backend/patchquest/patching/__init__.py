@@ -6,6 +6,7 @@ from patchquest.patching.edits import (
     DeleteFile,
     EditError,
     SearchReplace,
+    WriteFile,
     changes_from_model_output,
 )
 from patchquest.patching.engine import (
@@ -19,6 +20,6 @@ from patchquest.patching.unified import PatchApplyError, parse_unified_diff
 
 __all__ = [
     "Change", "CreateFile", "DeleteFile", "EditError", "PatchApplyError", "PatchResult",
-    "SearchReplace", "apply_changes", "changes_from_model_output", "changes_from_unified_diff",
+    "SearchReplace", "WriteFile", "apply_changes", "changes_from_model_output", "changes_from_unified_diff",
     "parse_unified_diff", "rollback", "sha256_bytes",
 ]

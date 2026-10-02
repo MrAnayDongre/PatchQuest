@@ -34,7 +34,15 @@ class DeleteFile:
     path: str
 
 
-Change = SearchReplace | CreateFile | DeleteFile
+@dataclass
+class WriteFile:
+    """Create or overwrite ``path`` with ``content`` (used to promote a verified workspace state)."""
+
+    path: str
+    content: str
+
+
+Change = SearchReplace | CreateFile | DeleteFile | WriteFile
 
 
 def _rstrip_lines(text: str) -> str:

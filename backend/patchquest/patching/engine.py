@@ -21,6 +21,7 @@ from patchquest.patching.edits import (
     DeleteFile,
     EditError,
     SearchReplace,
+    WriteFile,
     apply_search_replace,
 )
 from patchquest.patching.unified import (
@@ -156,6 +157,9 @@ def apply_changes(
                 load(change.path)
                 if working[change.path] not in (None, ""):
                     raise PatchApplyError(f"{change.path} already exists")
+                working[change.path] = change.content
+            elif isinstance(change, WriteFile):
+                load(change.path)
                 working[change.path] = change.content
             elif isinstance(change, DeleteFile):
                 load(change.path)
