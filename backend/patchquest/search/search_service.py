@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from patchquest.database import get_db, now_iso
 from patchquest.search.search_models import SearchOptions, SearchResponse
@@ -43,9 +43,9 @@ def _get_cached(cache_key: str, ttl: int) -> SearchResponse | None:
 
 def _store_cache(cache_key: str, query: str, provider: str, response: SearchResponse, ttl: int) -> None:
     now = now_iso()
-    expires = datetime.now(timezone.utc).isoformat()
+    expires = datetime.now(UTC).isoformat()
     from datetime import timedelta
-    expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
+    expires = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
     with get_db() as conn:
         conn.execute(
             """INSERT OR REPLACE INTO search_cache
@@ -60,7 +60,6 @@ def _check_rate_limit(provider: str) -> None:
     now = time.monotonic()
     if now - last < RATE_LIMIT_SECONDS:
         wait = RATE_LIMIT_SECONDS - (now - last)
-        import asyncio
         raise RuntimeError(f"Rate limited: wait {wait:.1f}s before searching with {provider}")
     _rate_limits[provider] = now
 

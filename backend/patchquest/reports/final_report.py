@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from patchquest.orchestrator.run_context import RunContext
@@ -11,7 +11,7 @@ from patchquest.tools.secret_guard import redact_secrets
 
 
 def generate_report(ctx: RunContext) -> dict[str, Any]:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     sections: list[str] = []
     sections.append("# PatchQuest Run Report\n")
@@ -112,7 +112,7 @@ def generate_report_from_run_record(run_id: str) -> dict[str, Any]:
     if not run:
         return {"report_md": f"# Run {run_id}\n\nRun not found.", "diff_patch": "", "commands_log": ""}
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     keys = run.keys() if hasattr(run, "keys") else []
     provider = run["provider"] if "provider" in keys else "mock"
     model = run["model"] if "model" in keys else None

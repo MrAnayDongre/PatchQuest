@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from patchquest.config import get_config
 from patchquest.database import get_db, insert_event, now_iso
@@ -23,6 +23,9 @@ from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
 from patchquest.tools.secret_guard import redact_secrets
+
+if TYPE_CHECKING:
+    from patchquest.runtime.workspace import ShadowWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +126,7 @@ class RunStateMachine:
         self.phase_statuses: dict[Phase, PhaseStatus] = {p: PhaseStatus.PENDING for p in Phase}
         self._approval_events: dict[str, asyncio.Event] = {}
         self._approval_results: dict[str, bool] = {}
-        self._workspace = None  # patchquest.runtime.workspace.ShadowWorkspace, created on demand
+        self._workspace: ShadowWorkspace | None = None  # created on demand
         self._blocked = False
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._cancelled = asyncio.Event()
@@ -195,7 +198,7 @@ class RunStateMachine:
         await self._emit("phase_skipped", phase=phase.value, status="skipped", message=message)
 
     # --------------------------------------------------------------- workspace
-    async def _ws(self):
+    async def _ws(self) -> ShadowWorkspace:
         """Create (once) the shadow workspace all mutation and validation runs inside."""
         if self._workspace is None:
             from patchquest.runtime.workspace import ShadowWorkspace
@@ -222,7 +225,7 @@ class RunStateMachine:
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             approved = self._approval_results.get(approval_id, False) and not self._cancelled.is_set()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             approved = False
             with get_db() as conn:
                 conn.execute("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'",

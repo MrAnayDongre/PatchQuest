@@ -135,7 +135,7 @@ class RunContext:
     test_results: list[dict[str, Any]] = field(default_factory=list)
     commands_run: list[dict[str, Any]] = field(default_factory=list)
     security_findings: list[dict[str, Any]] = field(default_factory=list)
-    secret_findings: list[dict[str, Any]] = field(default_factory=list)
+    secret_findings: list[Any] = field(default_factory=list)
     approvals: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)

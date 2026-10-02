@@ -80,6 +80,7 @@ def test_report_docker_runtime_from_context():
 
 def test_report_docker_runtime_from_run_record(tmp_path):
     import sqlite3
+
     from patchquest.database import init_db, set_db_path
 
     db_path = tmp_path / "report.db"

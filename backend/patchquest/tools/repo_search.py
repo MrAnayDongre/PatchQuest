@@ -55,7 +55,7 @@ def _python_search(query: str, repo_path: str, glob: str | None, max_results: in
 
             filepath = Path(dirpath) / filename
             try:
-                with open(filepath, "r", errors="replace") as f:
+                with open(filepath, errors="replace") as f:
                     for i, line in enumerate(f, 1):
                         if pattern.search(line):
                             matches.append({

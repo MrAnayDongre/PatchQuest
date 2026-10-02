@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from urllib.parse import urlencode
 
 from patchquest.search.search_models import SearchOptions, SearchResponse, SearchResult
 from patchquest.search.search_provider_base import SearchProvider

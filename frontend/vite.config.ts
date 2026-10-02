@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     pool: 'forks',
+    setupFiles: ['src/test/setup.ts'],
   },
   server: {
     port: 5173,

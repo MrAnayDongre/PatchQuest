@@ -1,6 +1,5 @@
 """Tests for state machine."""
 
-import asyncio
 import tempfile
 from pathlib import Path
 

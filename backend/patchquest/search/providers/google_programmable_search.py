@@ -43,7 +43,7 @@ class GoogleProgrammableSearchProvider(SearchProvider):
         api_key = self._require_env(self.api_key_env)
         cx = self._require_env(self.search_engine_id_env)
 
-        params = {"q": query, "key": api_key, "cx": cx, "num": min(opts.max_results, 10)}
+        params: dict[str, str | int] = {"q": query, "key": api_key, "cx": cx, "num": min(opts.max_results, 10)}
 
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(self.base_url, params=params)

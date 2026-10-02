@@ -1,6 +1,5 @@
 """Tests for search service — caching, redaction, rate limits."""
 
-import pytest
 
 from patchquest.search.search_models import SearchOptions, SearchResponse, SearchResult
 from patchquest.search.search_service import _cache_key, _redact_secrets

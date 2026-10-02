@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from patchquest.calendar.calendar_models import CalendarEvent, CalendarInfo
@@ -152,7 +152,7 @@ def _from_ical_dt(ical: str) -> str:
     try:
         ical = ical.rstrip("Z")
         dt = datetime.strptime(ical[:15], "%Y%m%dT%H%M%S")
-        return dt.replace(tzinfo=timezone.utc).isoformat()
+        return dt.replace(tzinfo=UTC).isoformat()
     except ValueError:
         return ical
 

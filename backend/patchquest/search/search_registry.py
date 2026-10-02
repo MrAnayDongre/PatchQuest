@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Type
 
 from patchquest.search.search_provider_base import SearchProvider
 
 logger = logging.getLogger(__name__)
 
-_providers: dict[str, Type[SearchProvider]] = {}
+_providers: dict[str, type[SearchProvider]] = {}
 
 
-def register_search_provider(name: str, cls: Type[SearchProvider]) -> None:
+def register_search_provider(name: str, cls: type[SearchProvider]) -> None:
     _providers[name] = cls
 
 
@@ -41,12 +40,12 @@ def get_provider_status() -> list[dict]:
 
 def _auto_register() -> None:
     from patchquest.search.providers.brave_search import BraveSearchProvider
-    from patchquest.search.providers.tavily_search import TavilySearchProvider
-    from patchquest.search.providers.serper_search import SerperSearchProvider
-    from patchquest.search.providers.serpapi_search import SerpApiSearchProvider
-    from patchquest.search.providers.google_programmable_search import GoogleProgrammableSearchProvider
-    from patchquest.search.providers.duckduckgo_search import DuckDuckGoSearchProvider
     from patchquest.search.providers.custom_search import CustomSearchProvider
+    from patchquest.search.providers.duckduckgo_search import DuckDuckGoSearchProvider
+    from patchquest.search.providers.google_programmable_search import GoogleProgrammableSearchProvider
+    from patchquest.search.providers.serpapi_search import SerpApiSearchProvider
+    from patchquest.search.providers.serper_search import SerperSearchProvider
+    from patchquest.search.providers.tavily_search import TavilySearchProvider
 
     register_search_provider("brave", BraveSearchProvider)
     register_search_provider("tavily", TavilySearchProvider)

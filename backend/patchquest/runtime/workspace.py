@@ -14,7 +14,7 @@ import stat
 from pathlib import Path
 
 from patchquest.memory.repo_indexer import IGNORED_DIRS
-from patchquest.patching import PatchResult, WriteFile, DeleteFile, apply_changes, sha256_bytes
+from patchquest.patching import Change, DeleteFile, PatchResult, WriteFile, apply_changes, sha256_bytes
 from patchquest.paths import resolve_in_repo
 
 WORKSPACE_BASE = Path.home() / ".patchquest" / "sandboxes"
@@ -134,7 +134,7 @@ class ShadowWorkspace:
     # --- promotion -------------------------------------------------------
     def promote(self) -> PatchResult:
         """Write every touched file's workspace state into the real repo, atomically."""
-        changes: list[WriteFile | DeleteFile] = []
+        changes: list[Change] = []
         expected: dict[str, str | None] = {}
         for rel in self.touched:
             expected[rel] = sha256_bytes(self.base[rel])

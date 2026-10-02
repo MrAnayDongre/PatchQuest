@@ -16,7 +16,6 @@ from patchquest.scheduler.scheduler import (
     update_task,
 )
 from patchquest.scheduler.scheduler_loop import is_running
-from patchquest.security import RepoPathError, validate_repo_path
 from patchquest.scheduler.scheduler_models import (
     CreateScheduledTaskRequest,
     ScheduledRunHistoryResponse,
@@ -24,6 +23,7 @@ from patchquest.scheduler.scheduler_models import (
     SchedulerStatusResponse,
     UpdateScheduledTaskRequest,
 )
+from patchquest.security import RepoPathError, validate_repo_path
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 
@@ -55,7 +55,7 @@ async def create_scheduled_task(req: CreateScheduledTaskRequest) -> ScheduledTas
     try:
         req = req.model_copy(update={"repo_path": validate_repo_path(req.repo_path)})
     except RepoPathError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
     try:
         task_id = create_task(
             title=req.title,
@@ -72,7 +72,7 @@ async def create_scheduled_task(req: CreateScheduledTaskRequest) -> ScheduledTas
             next_run_at=req.next_run_at,
         )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
     task = get_task(task_id)
     if not task:
@@ -96,7 +96,7 @@ async def update_scheduled_task(task_id: int, req: UpdateScheduledTaskRequest) -
             from patchquest.scheduler.scheduler import validate_timezone
             validate_timezone(fields["timezone"])
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
 
     update_task(task_id, **fields)
     task = get_task(task_id)

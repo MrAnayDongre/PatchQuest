@@ -1,10 +1,9 @@
 """Tests for provider configuration safety."""
 
-import os
 
 from patchquest.agents.provider_base import ModelConfig
 from patchquest.agents.provider_registry import PROVIDERS, get_provider
-from patchquest.config import AppConfig, ModelsConfig, ModelProfile
+from patchquest.config import AppConfig, ModelProfile
 
 
 def test_no_hardcoded_api_keys_in_config():
@@ -37,6 +36,7 @@ def test_model_config_stores_env_var_name_not_value():
 
 def test_mock_provider_returns_valid_json():
     import asyncio
+
     from patchquest.agents.providers_mock import MockProvider
 
     provider = MockProvider()
@@ -54,7 +54,7 @@ def test_mock_provider_returns_valid_json():
 
 def test_mock_provider_never_returns_secrets():
     import asyncio
-    import json
+
     from patchquest.agents.providers_mock import MockProvider
     from patchquest.tools.secret_guard import has_secrets
 

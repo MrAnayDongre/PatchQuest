@@ -118,8 +118,6 @@ class TestHappyPath:
 
     @pytest.mark.asyncio
     async def test_context_comes_from_disk_not_from_the_model(self, repo):
-        script_name = {}
-
         sm, rid = await run(repo, {"planner": [PLAN], "coder": [FIX]})
         script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
         coder_prompt = script.calls_for("coder")[0]["messages"][1]["content"]

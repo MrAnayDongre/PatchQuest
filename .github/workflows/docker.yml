@@ -1,0 +1,22 @@
+name: Sandbox image
+
+# Expensive tier: only when the sandbox image definition changes.
+on:
+  pull_request:
+    paths: ["docker/**"]
+  push:
+    branches: [main]
+    paths: ["docker/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t patchquest-sandbox:latest docker/sandbox
+      - name: Sandbox has no network and no host credentials
+        run: |
+          docker run --rm --network=none patchquest-sandbox:latest sh -c 'python --version && ! curl -sS -m 3 https://example.com'

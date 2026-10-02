@@ -5,15 +5,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from patchquest.runtime.docker_runtime import (
-    COPY_EXCLUDE_DIRS,
     DockerRuntime,
     _copy_repo_to_sandbox,
-    _should_exclude_file,
     build_docker_command,
-    check_docker_available,
 )
 from patchquest.runtime.runtime_registry import get_runtime, get_runtime_status
 
@@ -29,7 +24,6 @@ class TestDockerCommandConstruction:
 
     def test_mounts_only_workspace(self):
         cmd = build_docker_command("ls", "/tmp/workspace")
-        volume_args = [a for a in cmd if a.startswith("/tmp/workspace")]
         assert any("/tmp/workspace:/workspace" in a for a in cmd)
         # No home directory
         home = os.path.expanduser("~")

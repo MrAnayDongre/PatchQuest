@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -86,7 +86,7 @@ def update_task(task_id: int, **fields: Any) -> bool:
 
     updates["updated_at"] = now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [task_id]
+    values = [*updates.values(), task_id]
 
     with get_db() as conn:
         cursor = conn.execute(f"UPDATE scheduled_tasks SET {set_clause} WHERE id = ?", values)
@@ -136,7 +136,7 @@ def run_task_now(task_id: int) -> str | None:
 
 def get_due_tasks(now_dt: datetime | None = None) -> list[dict]:
     if now_dt is None:
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     with get_db() as conn:
         rows = conn.execute(
@@ -197,7 +197,7 @@ def validate_timezone(tz: str) -> None:
     try:
         ZoneInfo(str(tz).strip())
     except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"Invalid timezone: {tz}")
+        raise ValueError(f"Invalid timezone: {tz}") from None
 
 
 def _provider_config_error(provider: str) -> str | None:
@@ -252,6 +252,7 @@ def _execute_task(task: dict) -> str | None:
     _advance_task_schedule(task, now)
 
     import asyncio
+
     from patchquest.orchestrator.state_machine import RunStateMachine
 
     machine = RunStateMachine(

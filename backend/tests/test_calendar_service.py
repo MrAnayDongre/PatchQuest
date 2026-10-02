@@ -7,9 +7,7 @@ from patchquest.calendar.calendar_service import (
     check_conflicts,
     create_event,
     create_scheduled_task_event,
-    delete_event,
     find_next_available,
-    get_availability,
     list_events,
 )
 from patchquest.database import init_db, set_db_path
@@ -22,7 +20,7 @@ def setup_db(tmp_path):
 
 
 def test_create_and_list():
-    ev = create_event(CalendarEvent(
+    create_event(CalendarEvent(
         title="Test", start_at="2026-06-15T09:00:00+00:00", end_at="2026-06-15T10:00:00+00:00",
     ))
     events = list_events("2026-06-01T00:00:00Z", "2026-06-30T00:00:00Z")

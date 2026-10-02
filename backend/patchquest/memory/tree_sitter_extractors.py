@@ -8,7 +8,6 @@ from typing import Any
 from patchquest.memory.tree_sitter_registry import (
     get_parser,
     is_language_available,
-    language_for_file,
 )
 
 logger = logging.getLogger(__name__)

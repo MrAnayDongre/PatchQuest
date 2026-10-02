@@ -96,7 +96,8 @@ def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[s
         return _result(False, -1, "", f"Command execution error: {exc}", False, False, started)
 
     out, err = _Capture(proc.stdout, max_output), _Capture(proc.stderr, max_output)
-    out.start(), err.start()
+    out.start()
+    err.start()
     timed_out = False
     try:
         proc.wait(timeout=timeout)
@@ -107,7 +108,8 @@ def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[s
     # Surviving grandchildren in the group would keep the pipes open; reap them.
     if not timed_out:
         _kill_group_quietly(proc)
-    out.join(timeout=5), err.join(timeout=5)
+    out.join(timeout=5)
+    err.join(timeout=5)
 
     stderr = err.text
     if timed_out:

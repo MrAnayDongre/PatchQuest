@@ -22,6 +22,7 @@ from pathlib import Path
 
 from patchquest.paths import FORBIDDEN_PREFIXES, _is_within
 
+
 class RiskLevel(str, Enum):
     NO_RISK_AUTO = "no_risk_auto"
     CAREFUL_AUTO = "careful_auto"
@@ -186,7 +187,7 @@ def classify(command: str, repo_path: str | None = None) -> Decision:
     exe = os.path.basename(argv[0])
     args = argv[1:]
 
-    if "/" in argv[0] and not os.path.isabs(argv[0]) or argv[0].startswith("./"):
+    if ("/" in argv[0] and not os.path.isabs(argv[0])) or argv[0].startswith("./"):
         return Decision(RiskLevel.RISKY_ASK, "Runs a repository-provided executable.", argv)
 
     if exe in ("python", "python3", "node") and args == ["--version"]:

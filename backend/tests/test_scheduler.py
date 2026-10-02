@@ -1,14 +1,15 @@
 """Tests for the scheduler service and schedule calculator."""
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from patchquest.database import get_db, init_db, now_iso, set_db_path
+from patchquest.database import get_db, init_db, set_db_path
 from patchquest.scheduler.schedule_calculator import compute_next_run
 from patchquest.scheduler.scheduler import (
+    _provider_config_error,
     create_task,
     delete_task,
     get_due_tasks,
@@ -20,7 +21,6 @@ from patchquest.scheduler.scheduler import (
     run_task_now,
     update_task,
     validate_timezone,
-    _provider_config_error,
 )
 
 
@@ -37,7 +37,7 @@ class TestScheduleCalculator:
         assert "2026-12-25" in result
 
     def test_interval_adds_minutes(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = compute_next_run("interval", "30", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         assert next_dt > now
@@ -45,21 +45,21 @@ class TestScheduleCalculator:
         assert 1700 < diff < 1900  # ~30 minutes
 
     def test_interval_hours(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = compute_next_run("interval", "2h", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         diff = (next_dt - now).total_seconds()
         assert 7100 < diff < 7300  # ~2 hours
 
     def test_daily_next_run(self):
-        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=UTC)
         result = compute_next_run("daily", "09:00", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         assert next_dt.hour == 9
         assert next_dt.day == 8  # next day since 09:00 already passed
 
     def test_daily_same_day_if_future(self):
-        now = datetime(2026, 6, 7, 6, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 7, 6, 0, 0, tzinfo=UTC)
         result = compute_next_run("daily", "09:00", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         assert next_dt.hour == 9
@@ -67,14 +67,14 @@ class TestScheduleCalculator:
 
     def test_weekly_next_run(self):
         # 2026-06-07 is a Sunday (weekday=6)
-        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=UTC)
         result = compute_next_run("weekly", "mon,09:00", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         assert next_dt.weekday() == 0  # Monday
         assert next_dt.hour == 9
 
     def test_cron_fallback(self):
-        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 7, 15, 0, 0, tzinfo=UTC)
         result = compute_next_run("cron", "30 8 * * *", "UTC", from_time=now)
         next_dt = datetime.fromisoformat(result)
         assert next_dt > now
@@ -127,7 +127,7 @@ class TestSchedulerCRUD:
         tid = create_task(
             title="Pausable", task_prompt="t", repo_path="/tmp",
             schedule_type="one_shot",
-            next_run_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+            next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
         )
         pause_task(tid)
         due = get_due_tasks()
@@ -145,7 +145,7 @@ class TestSchedulerCRUD:
         create_task(
             title="Disabled", task_prompt="t", repo_path="/tmp",
             schedule_type="one_shot",
-            next_run_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+            next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
         )
         # Disable via pause
         tasks = list_tasks()
@@ -165,7 +165,7 @@ class TestSchedulerExecution:
         assert history[0]["status"] in ("started", "completed")
 
     def test_due_task_detected(self):
-        past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
         create_task(
             title="Due", task_prompt="t", repo_path="/tmp",
             schedule_type="one_shot", next_run_at=past,
@@ -174,7 +174,7 @@ class TestSchedulerExecution:
         assert len(due) == 1
 
     def test_future_task_not_due(self):
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         create_task(
             title="Future", task_prompt="t", repo_path="/tmp",
             schedule_type="one_shot", next_run_at=future,
@@ -300,7 +300,7 @@ class TestSchedulerExecution:
         assert entry["runtime_mode"] == "docker"
 
     def test_one_shot_clears_next_run_at_after_execution(self):
-        past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
         tid = create_task(
             title="One Shot",
             task_prompt="t",
@@ -314,7 +314,7 @@ class TestSchedulerExecution:
         assert task["next_run_at"] is None
 
     def test_active_task_before_due_stays_active(self):
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         tid = create_task(
             title="Future",
             task_prompt="t",

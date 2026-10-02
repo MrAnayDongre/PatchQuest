@@ -16,7 +16,7 @@ _PATTERNS = (
     re.compile(r"^(?:FAIL|ERROR):\s+(\S+)\s+\(([^)]+)\)", re.M),                          # unittest
     re.compile(r"^\s*--- FAIL:\s+(\S+)", re.M),                                           # go test
     re.compile(r"^test\s+(\S+)\s+\.\.\.\s+FAILED", re.M),                                  # cargo test
-    re.compile(r"^\s*(?:✕|×)\s+(.+?)(?:\s+\(\d+\s*ms\))?$", re.M),                        # jest / vitest
+    re.compile(r"^\s*(?:✕|×)\s+(.+?)(?:\s+\(\d+\s*ms\))?$", re.M),                        # jest / vitest  # noqa: RUF001
 )
 
 

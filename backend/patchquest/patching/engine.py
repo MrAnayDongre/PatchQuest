@@ -11,6 +11,7 @@ import difflib
 import hashlib
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -94,7 +95,7 @@ def _added_text(old: str, new: str) -> str:
 
 def apply_changes(
     repo_root: str,
-    changes: list[Change | FilePatch],
+    changes: Sequence[Change | FilePatch],
     *,
     expected_hashes: dict[str, str | None] | None = None,
     dry_run: bool = False,
@@ -180,7 +181,8 @@ def apply_changes(
 
     diff_parts: list[str] = []
     for rel, new_text in working.items():
-        old_text = None if originals[rel] is None else _decode(originals[rel], rel)[0]
+        raw_old = originals[rel]
+        old_text = None if raw_old is None else _decode(raw_old, rel)[0]
         if old_text == new_text:
             continue
         action = "create" if old_text is None else "delete" if new_text is None else "modify"

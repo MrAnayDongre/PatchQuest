@@ -99,7 +99,7 @@ def _get_language(language: str):
     else:
         import importlib
         mod = importlib.import_module(module_name)
-        lang_func = getattr(mod, f"language")
+        lang_func = mod.language
         return tree_sitter.Language(lang_func())
 
 

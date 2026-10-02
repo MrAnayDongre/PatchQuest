@@ -3,9 +3,9 @@
 import pytest
 
 from patchquest.search.search_registry import (
+    get_provider_status,
     get_search_provider,
     list_search_providers,
-    get_provider_status,
 )
 
 

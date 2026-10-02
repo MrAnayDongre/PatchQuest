@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from patchquest.agents.provider_base import ModelConfig, ProviderResponse
+from patchquest.agents.provider_base import ModelConfig
 from patchquest.agents.providers_openai_compatible import OpenAICompatibleProvider
 
 

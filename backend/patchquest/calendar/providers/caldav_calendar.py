@@ -78,7 +78,7 @@ class CalDAVCalendarProvider(CalendarProvider):
         from patchquest.calendar.providers.ics_calendar import ICSCalendarProvider
         ics_prov = ICSCalendarProvider()
         vevent_lines = ics_prov._event_to_vevent(event)
-        ics_text = "\r\n".join(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PatchQuest//EN"] + vevent_lines + ["END:VCALENDAR"])
+        ics_text = "\r\n".join(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PatchQuest//EN", *vevent_lines, "END:VCALENDAR"])
 
         client = self._client()
         principal = client.principal()
@@ -109,6 +109,7 @@ class CalDAVCalendarProvider(CalendarProvider):
                 ev.delete()
                 return True
             except Exception:
+                logger.debug("event %s not in this calendar", event_id, exc_info=True)
                 continue
         return False
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 from patchquest.agents.provider_base import ModelConfig, ProviderBase, ProviderResponse

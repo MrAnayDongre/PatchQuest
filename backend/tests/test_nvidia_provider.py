@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -146,7 +145,6 @@ class TestMessageConversion:
         assert result == ""
 
     def test_uses_responses_endpoint_not_chat_completions(self):
-        provider = NvidiaProvider()
         config = ModelConfig(
             provider="nvidia",
             model="openai/gpt-oss-120b",

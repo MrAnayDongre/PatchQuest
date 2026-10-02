@@ -62,7 +62,7 @@ async def search_query(req: SearchQueryRequest):
         )
         return result.model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/cache")

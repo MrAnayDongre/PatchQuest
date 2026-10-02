@@ -8,6 +8,7 @@ import pytest
 from patchquest.patching import (
     CreateFile,
     DeleteFile,
+    PatchApplyError,
     SearchReplace,
     apply_changes,
     changes_from_model_output,
@@ -220,5 +221,5 @@ class TestPathSafety:
 
 
 def test_changes_from_unified_diff_rejects_garbage():
-    with pytest.raises(Exception):
+    with pytest.raises(PatchApplyError):
         changes_from_unified_diff("this is not a diff")

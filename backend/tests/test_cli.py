@@ -83,7 +83,7 @@ def test_status_inspect_diff_roundtrip(env, capsys):
 
     assert cli.main(["--config", cfg, "inspect", run_id, "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert [e["type"] for e in data["events"]][0] == "run_created"
+    assert data["events"][0]["type"] == "run_created"
 
     assert cli.main(["--config", cfg, "diff", run_id]) == 0
     assert "+    return a + b" in capsys.readouterr().out

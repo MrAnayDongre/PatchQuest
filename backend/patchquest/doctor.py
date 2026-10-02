@@ -14,9 +14,9 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
 
 OK, INFO, WARN, FAIL = "ok", "info", "warn", "fail"
 
@@ -47,7 +47,7 @@ def check_dependencies() -> Check:
         except ImportError:
             missing.append(mod)
     if missing:
-        return Check("dependencies", FAIL, f"missing: {', '.join(missing)}", "Run: pip install -e backend")
+        return Check("dependencies", FAIL, f"missing: {', '.join(missing)}", "Run: pip install patchquest   (from a checkout: pip install -e backend)")
     return Check("dependencies", OK, "core dependencies import")
 
 
@@ -57,7 +57,7 @@ def check_tree_sitter() -> Check:
         importlib.import_module("tree_sitter_python")
     except ImportError:
         return Check("tree-sitter", WARN, "not installed; symbol extraction falls back to regex",
-                     'Run: pip install -e "backend[tree-sitter]"')
+                     'Run: pip install "patchquest[tree-sitter]"')
     return Check("tree-sitter", OK, "available")
 
 
@@ -68,7 +68,7 @@ def check_config() -> list[Check]:
     out: list[Check] = []
     try:
         cfg = get_config()
-    except Exception as exc:  # noqa: BLE001 - surfaced as a diagnostic
+    except Exception as exc:
         return [Check("config", FAIL, f"invalid configuration: {exc}", "Fix config.yaml or unset PATCHQUEST_CONFIG")]
     out.append(Check("config", OK, f"host={cfg.host} port={cfg.port} db={cfg.db_path}"))
     if not is_loopback(cfg.host) and not configured_token():
@@ -184,7 +184,7 @@ def check_providers() -> list[Check]:
             continue
         if env:
             ok = bool(os.environ.get(env))
-            out.append(Check(f"provider:{p['name']}", INFO if ok else INFO, f"{env} {'is set' if ok else 'is not set'}",
+            out.append(Check(f"provider:{p['name']}", INFO, f"{env} {'is set' if ok else 'is not set'}",
                              "" if ok else f"export {env}=..."))
         else:
             out.append(Check(f"provider:{p['name']}", INFO, f"endpoint {p.get('base_url') or 'configured per run'}"))
@@ -204,7 +204,7 @@ def run_checks() -> list[Check]:
     for fn in ALL_CHECKS:
         try:
             r = fn()
-        except Exception as exc:  # noqa: BLE001 - a broken check must not hide the others
+        except Exception as exc:
             results.append(Check(getattr(fn, "__name__", "check"), FAIL, f"check crashed: {exc}"))
             continue
         results.extend(r if isinstance(r, list) else [r])

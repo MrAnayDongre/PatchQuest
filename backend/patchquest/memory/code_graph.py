@@ -133,7 +133,7 @@ def find_importers(repo_path: str, module_name: str) -> list[dict]:
 def find_test_files(repo_path: str, file_path: str) -> list[str]:
     stem = Path(file_path).stem
     candidates = [f"test_{stem}", f"{stem}_test", f"tests/test_{stem}"]
-    results = []
+    results: list[str] = []
     with get_db() as conn:
         for candidate in candidates:
             rows = conn.execute(

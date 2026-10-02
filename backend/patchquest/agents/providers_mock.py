@@ -14,8 +14,6 @@ class MockProvider(ProviderBase):
         config: ModelConfig,
         response_format: dict | None = None,
     ) -> ProviderResponse:
-        last_message = messages[-1]["content"] if messages else ""
-
         if "intake" in config.model:
             content = json.dumps({
                 "task_type": "code_change",

@@ -1,13 +1,11 @@
 """Tests for local SQLite-backed calendar provider."""
 
+
 import pytest
 
 from patchquest.calendar.calendar_models import CalendarEvent
 from patchquest.calendar.providers.local_calendar import LocalCalendarProvider
 from patchquest.database import init_db, set_db_path
-
-import tempfile
-from pathlib import Path
 
 
 @pytest.fixture
@@ -91,7 +89,7 @@ def test_event_with_scheduled_task_id(local_cal):
         scheduled_task_id=42,
         reminder_minutes=10,
     )
-    created = local_cal.create_event(event)
+    local_cal.create_event(event)
     events = local_cal.list_events("2026-06-01T00:00:00Z", "2026-06-30T00:00:00Z")
     assert events[0].scheduled_task_id == 42
     assert events[0].reminder_minutes == 10

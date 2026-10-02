@@ -182,7 +182,7 @@ class TaskService:
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=heartbeat)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield {"type": "ping", "run_id": run_id}
                     if not self.is_active(run_id) and self.get_run(run_id)["status"] in TERMINAL_STATUSES:
                         return

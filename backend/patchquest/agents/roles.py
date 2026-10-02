@@ -94,7 +94,7 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
             return response.content or ""
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - re-raised below with context
+        except Exception as exc:
             last = exc
             if attempt + 1 < MAX_ATTEMPTS and _is_transient(exc):
                 delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
@@ -103,7 +103,8 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
                 continue
             break
 
-    assert last is not None
+    if last is None:  # pragma: no cover - the loop always records an exception before breaking
+        raise RuntimeError(f"role {role_name} produced no response")
     message = str(last)
     if model_config.api_key_env:
         key_value = os.environ.get(model_config.api_key_env, "")

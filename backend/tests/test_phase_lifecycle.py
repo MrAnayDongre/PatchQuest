@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 
 import pytest
 
 from patchquest.config import AppConfig, set_config
 from patchquest.database import get_db, init_db, now_iso, set_db_path
-from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
-from patchquest.orchestrator.run_context import RunContext, _detect_read_only
+from patchquest.orchestrator.phases import Phase, PhaseStatus
+from patchquest.orchestrator.run_context import _detect_read_only
 from patchquest.orchestrator.state_machine import RunStateMachine
 from patchquest.reports.final_report import generate_report
 

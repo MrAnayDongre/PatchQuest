@@ -1,6 +1,5 @@
 """Tests for Tree-sitter and regex symbol extraction."""
 
-import pytest
 from pathlib import Path
 
 from patchquest.memory.symbol_extractors import extract_symbols
@@ -165,7 +164,6 @@ def test_c_structs():
 def test_cpp_classes():
     content = _read_fixture("sample.cpp")
     symbols = extract_symbols(content, "cpp")
-    types = {s["type"]: s["name"] for s in symbols}
     assert "Engine" in [s["name"] for s in symbols if s["type"] == "class"] or \
            "patchquest" in [s["name"] for s in symbols if s["type"] == "namespace"]
 

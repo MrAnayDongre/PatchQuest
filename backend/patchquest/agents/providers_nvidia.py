@@ -105,7 +105,7 @@ class NvidiaProvider(ProviderBase):
         try:
             import httpx
         except ImportError:
-            raise RuntimeError("httpx is required for NVIDIA provider but is not installed")
+            raise RuntimeError("httpx is required for NVIDIA provider but is not installed") from None
 
         if not config.base_url:
             config.base_url = _BASE_URL
@@ -153,7 +153,7 @@ class NvidiaProvider(ProviderBase):
                     if retry_after:
                         wait = float(retry_after)
                     else:
-                        wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
+                        wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)  # noqa: S311 - retry jitter, not security
                     if attempt < _MAX_RETRIES:
                         logger.warning(
                             "NVIDIA API %d (attempt %d/%d), retrying in %.1fs",
@@ -174,14 +174,14 @@ class NvidiaProvider(ProviderBase):
                 last_exc = exc
                 err_msg = _redact_key(str(exc), api_key)
                 if exc.response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES:
-                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
+                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)  # noqa: S311 - retry jitter, not security
                     await asyncio.sleep(wait)
                     continue
                 raise RuntimeError(f"NVIDIA API request failed: {err_msg}") from exc
             except httpx.RequestError as exc:
                 last_exc = exc
                 if attempt < _MAX_RETRIES:
-                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
+                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)  # noqa: S311 - retry jitter, not security
                     await asyncio.sleep(wait)
                     continue
                 raise RuntimeError(

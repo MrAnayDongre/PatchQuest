@@ -47,8 +47,45 @@ dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.25.0",
+    "ruff>=0.6.0",
+    "mypy>=1.10",
+    "types-PyYAML",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "build", "tests/fixtures"]
+
+[tool.ruff.lint]
+# E/F/W correctness, I imports, B bugbear, UP modernisation, ASYNC blocking-in-async,
+# S security (bandit), RUF misc. Deliberately not "ALL": every rule here is enforced in CI.
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "S", "RUF"]
+ignore = [
+    "E501",    # long lines are formatter territory
+    "S608",    # SQL built from internal constants only (reviewed)
+    "RUF012",  # pydantic/dataclass mutable defaults are handled by the frameworks
+    "UP042",   # (str, Enum) is kept on purpose: str() output is stable across Python versions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S103", "S104", "S105", "S106", "S108", "S603", "S607", "ASYNC", "B011", "RUF001", "RUF059"]
+# The executor and runtimes exist to launch subprocesses; policy lives in tools/command_risk.py.
+"patchquest/execution/*" = ["S603", "S607"]
+"patchquest/runtime/*" = ["S603", "S607"]
+"patchquest/tools/*" = ["S603", "S607"]
+"patchquest/doctor.py" = ["S603", "S607"]
+# These hold environment-variable *names* (e.g. api_token_env), not secrets.
+"patchquest/config.py" = ["S105", "S106"]
+"patchquest/calendar/providers/*" = ["S107"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+files = ["patchquest"]

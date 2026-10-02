@@ -1,7 +1,7 @@
 """Tests for code graph."""
 
+
 import pytest
-from pathlib import Path
 
 from patchquest.database import init_db, set_db_path
 from patchquest.memory.code_graph import (
@@ -9,12 +9,10 @@ from patchquest.memory.code_graph import (
     clear_repo,
     find_definitions,
     find_importers,
-    find_test_files,
     get_file_symbols,
     get_graph_stats,
     get_most_connected,
     index_file_symbols,
-    init_code_graph,
     upsert_node,
 )
 

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from patchquest.agents.provider_base import ModelConfig, ProviderResponse
-from patchquest.agents.provider_registry import PROVIDERS, get_provider
+from patchquest.agents.provider_base import ModelConfig
+from patchquest.agents.provider_registry import get_provider
 from patchquest.agents.providers_groq import GroqProvider
 from patchquest.agents.providers_mock import MockProvider
 from patchquest.api.schemas import CreateRunRequest, RunResponse
@@ -217,11 +214,6 @@ async def test_test_provider_unknown():
 async def test_call_role_uses_context_provider():
     from patchquest.agents.roles import _call_role
 
-    mock_resp = ProviderResponse(
-        content='{"result": "ok"}',
-        usage={},
-        model="llama-3.1-8b-instant",
-    )
     ctx = RunContext(
         run_id="r1", repo_path="/tmp", task="t",
         provider="mock", model="mock-intake",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from patchquest.calendar.calendar_models import AvailabilityBlock, CalendarEvent
 from patchquest.calendar.calendar_registry import get_calendar_provider
@@ -19,7 +19,7 @@ def _default_provider() -> str:
         if cal_cfg:
             return getattr(cal_cfg, "default_provider", "local")
     except Exception:
-        pass
+        logger.debug("calendar config unavailable; defaulting to local", exc_info=True)
     return "local"
 
 
@@ -115,7 +115,7 @@ def create_scheduled_task_event(
 
 def update_scheduled_task_event(task_id: int, provider_name: str | None = None, **updates) -> CalendarEvent | None:
     provider = get_calendar_provider(provider_name or _default_provider())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     events = provider.list_events(
         (now - timedelta(days=365)).isoformat(),
         (now + timedelta(days=365)).isoformat(),
@@ -131,7 +131,7 @@ def update_scheduled_task_event(task_id: int, provider_name: str | None = None, 
 
 def delete_scheduled_task_events(task_id: int, provider_name: str | None = None) -> int:
     provider = get_calendar_provider(provider_name or _default_provider())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     events = provider.list_events(
         (now - timedelta(days=365)).isoformat(),
         (now + timedelta(days=365)).isoformat(),

@@ -4,8 +4,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from patchquest.database import get_db, init_db, set_db_path
-from patchquest.memory.repo_indexer import IGNORED_DIRS, index_repo
+from patchquest.database import init_db, set_db_path
+from patchquest.memory.repo_indexer import index_repo
 from patchquest.memory.symbol_extractors import extract_symbols
 
 

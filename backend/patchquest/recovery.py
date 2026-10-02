@@ -33,8 +33,8 @@ def recover_interrupted_runs() -> int:
             )
         try:  # scheduled tasks that were mid-run when the process died
             conn.execute("UPDATE scheduled_tasks SET status = 'active' WHERE status = 'running'")
-        except Exception:  # noqa: BLE001 - table may not exist on very old databases
-            pass
+        except Exception:
+            logger.debug("scheduled_tasks reset skipped", exc_info=True)
     if rows:
         logger.warning("Recovered %d interrupted run(s)", len(rows))
     return len(rows)

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from patchquest.agents.provider_base import ModelConfig, ProviderResponse
+from patchquest.agents.provider_base import ProviderResponse
 from patchquest.agents.providers_nvidia import NvidiaProvider, _extract_output_text
 from patchquest.config import AppConfig, set_config
 from patchquest.database import get_db, init_db, insert_event, now_iso, set_db_path
