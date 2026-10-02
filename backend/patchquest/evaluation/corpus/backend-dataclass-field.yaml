@@ -1,0 +1,59 @@
+schema: 1
+id: backend-dataclass-field
+category: backend
+difficulty: easy
+task: Add an optional email field (default None) to the User dataclass in models.py and include it in
+  to_dict().
+files:
+  models.py: |
+    from dataclasses import dataclass
+
+
+    @dataclass
+    class User:
+        id: int
+        name: str
+
+        def to_dict(self):
+            return {"id": self.id, "name": self.name}
+  tests/test_models.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from models import User
+
+
+    class T(unittest.TestCase):
+        def test_email_in_dict(self):
+            self.assertEqual(User(1, "a", "a@x.io").to_dict()["email"], "a@x.io")
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_models_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      from models import User
+
+
+      class O(unittest.TestCase):
+          def test_email_optional(self):
+              self.assertEqual(User(1, "a").to_dict(), {"id": 1, "name": "a", "email": None})
+solution:
+  files_to_inspect:
+  - models.py
+  edits:
+  - path: models.py
+    search: |2-
+          name: str
+
+          def to_dict(self):
+              return {"id": self.id, "name": self.name}
+    replace: |2-
+          name: str
+          email: str | None = None
+
+          def to_dict(self):
+              return {"id": self.id, "name": self.name, "email": self.email}
+  create: []

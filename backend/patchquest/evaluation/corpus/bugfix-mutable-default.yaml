@@ -1,0 +1,54 @@
+schema: 1
+id: bugfix-mutable-default
+category: bug_fix
+difficulty: medium
+task: 'add_tag() in tags.py leaks state between calls: tags added for one item show up on the next. Fix
+  the bug without changing the function''s signature or behaviour otherwise.'
+files:
+  tags.py: |
+    def add_tag(tag, tags=[]):
+        """Return a list containing `tag` after any existing `tags`."""
+        tags.append(tag)
+        return tags
+  tests/test_tags.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from tags import add_tag
+
+
+    class T(unittest.TestCase):
+        def test_calls_are_independent(self):
+            self.assertEqual(add_tag("a"), ["a"])
+            self.assertEqual(add_tag("b"), ["b"])
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_tags_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      from tags import add_tag
+
+
+      class O(unittest.TestCase):
+          def test_extends_a_given_list_without_mutating_it(self):
+              base = ["x"]
+              self.assertEqual(add_tag("y", base), ["x", "y"])
+              self.assertEqual(base, ["x"])
+solution:
+  files_to_inspect:
+  - tags.py
+  edits:
+  - path: tags.py
+    search: |-
+      def add_tag(tag, tags=[]):
+          """Return a list containing `tag` after any existing `tags`."""
+          tags.append(tag)
+          return tags
+    replace: |-
+      def add_tag(tag, tags=None):
+          """Return a list containing `tag` after any existing `tags`."""
+          return [*(tags or []), tag]
+  create: []

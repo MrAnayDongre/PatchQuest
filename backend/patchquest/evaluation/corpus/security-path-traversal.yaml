@@ -1,0 +1,74 @@
+schema: 1
+id: security-path-traversal
+category: security_fix
+difficulty: medium
+task: read_user_file() in files.py lets callers read files outside base_dir with paths like '../secret.txt'.
+  Make it raise ValueError for any filename that resolves outside base_dir.
+files:
+  files.py: |
+    import os
+
+
+    def read_user_file(base_dir, filename):
+        with open(os.path.join(base_dir, filename)) as fh:
+            return fh.read()
+  tests/test_files.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    import tempfile
+    from files import read_user_file
+
+
+    class T(unittest.TestCase):
+        def test_traversal_rejected(self):
+            base = tempfile.mkdtemp()
+            with open(os.path.join(os.path.dirname(base), "outside.txt"), "w") as fh:
+                fh.write("secret")
+            with self.assertRaises(ValueError):
+                read_user_file(base, "../outside.txt")
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_files_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      import tempfile
+      from files import read_user_file
+
+
+      class O(unittest.TestCase):
+          def setUp(self):
+              self.base = tempfile.mkdtemp()
+              os.makedirs(os.path.join(self.base, "sub"))
+              with open(os.path.join(self.base, "sub", "ok.txt"), "w") as fh:
+                  fh.write("fine")
+
+          def test_nested_file_still_readable(self):
+              self.assertEqual(read_user_file(self.base, "sub/ok.txt"), "fine")
+
+          def test_absolute_path_rejected(self):
+              with self.assertRaises(ValueError):
+                  read_user_file(self.base, "/etc/hostname")
+
+          def test_sneaky_traversal_rejected(self):
+              with self.assertRaises(ValueError):
+                  read_user_file(self.base, "sub/../../x")
+solution:
+  files_to_inspect:
+  - files.py
+  edits:
+  - path: files.py
+    search: |2-
+          with open(os.path.join(base_dir, filename)) as fh:
+              return fh.read()
+    replace: |2-
+          base = os.path.realpath(base_dir)
+          target = os.path.realpath(os.path.join(base, filename))
+          if os.path.commonpath([base, target]) != base:
+              raise ValueError("path escapes base_dir")
+          with open(target) as fh:
+              return fh.read()
+  create: []

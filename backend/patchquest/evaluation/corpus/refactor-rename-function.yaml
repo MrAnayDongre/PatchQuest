@@ -1,0 +1,86 @@
+schema: 1
+id: refactor-rename-function
+category: refactor
+difficulty: medium
+task: Rename calc_total to compute_total everywhere (definition and all callers) without changing behaviour.
+files:
+  pricing.py: |
+    def calc_total(prices, tax_rate=0.0):
+        return round(sum(prices) * (1 + tax_rate), 2)
+  invoice.py: |
+    from pricing import calc_total
+
+
+    def invoice_line(prices):
+        return f"Total: {calc_total(prices, 0.1)}"
+  report.py: |
+    from pricing import calc_total
+
+
+    def report(prices):
+        return {"total": calc_total(prices)}
+  tests/test_pricing.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from pricing import compute_total
+
+
+    class T(unittest.TestCase):
+        def test_renamed(self):
+            self.assertEqual(compute_total([1, 2, 3]), 6)
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_callers_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      import invoice, report
+
+
+      class O(unittest.TestCase):
+          def test_callers_still_work(self):
+              self.assertEqual(invoice.invoice_line([10, 10]), "Total: 22.0")
+              self.assertEqual(report.report([1, 2]), {"total": 3})
+
+          def test_no_stale_references(self):
+              root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+              for name in ("pricing.py", "invoice.py", "report.py"):
+                  with open(os.path.join(root, name)) as fh:
+                      self.assertNotIn("calc_total", fh.read(), name)
+solution:
+  files_to_inspect:
+  - pricing.py
+  - invoice.py
+  - invoice.py
+  - report.py
+  - report.py
+  edits:
+  - path: pricing.py
+    search: |-
+      def calc_total(
+    replace: |-
+      def compute_total(
+  - path: invoice.py
+    search: |-
+      from pricing import calc_total
+    replace: |-
+      from pricing import compute_total
+  - path: invoice.py
+    search: |-
+      {calc_total(prices, 0.1)}
+    replace: |-
+      {compute_total(prices, 0.1)}
+  - path: report.py
+    search: |-
+      from pricing import calc_total
+    replace: |-
+      from pricing import compute_total
+  - path: report.py
+    search: |-
+      calc_total(prices)}
+    replace: |-
+      compute_total(prices)}
+  create: []

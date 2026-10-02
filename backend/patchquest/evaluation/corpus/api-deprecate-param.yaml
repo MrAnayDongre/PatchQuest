@@ -1,0 +1,66 @@
+schema: 1
+id: api-deprecate-param
+category: api_change
+difficulty: medium
+task: In client.py rename the 'retries' parameter of fetch() to 'max_retries'. Keep 'retries' working
+  as a deprecated alias that emits a DeprecationWarning.
+files:
+  client.py: |
+    def fetch(url, retries=3):
+        return {"url": url, "attempts": retries + 1}
+  tests/test_client.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    import warnings
+    from client import fetch
+
+
+    class T(unittest.TestCase):
+        def test_new_name(self):
+            self.assertEqual(fetch("u", max_retries=1)["attempts"], 2)
+
+        def test_old_name_warns(self):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                self.assertEqual(fetch("u", retries=2)["attempts"], 3)
+            self.assertTrue(any(issubclass(w.category, DeprecationWarning) for w in caught))
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_client_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      import warnings
+      from client import fetch
+
+
+      class O(unittest.TestCase):
+          def test_default_unchanged(self):
+              self.assertEqual(fetch("u")["attempts"], 4)
+
+          def test_new_name_does_not_warn(self):
+              with warnings.catch_warnings(record=True) as caught:
+                  warnings.simplefilter("always")
+                  fetch("u", max_retries=1)
+              self.assertFalse(caught)
+solution:
+  files_to_inspect:
+  - client.py
+  edits:
+  - path: client.py
+    search: |-
+      def fetch(url, retries=3):
+          return {"url": url, "attempts": retries + 1}
+    replace: |-
+      import warnings
+
+
+      def fetch(url, max_retries=3, retries=None):
+          if retries is not None:
+              warnings.warn("retries is deprecated; use max_retries", DeprecationWarning, stacklevel=2)
+              max_retries = retries
+          return {"url": url, "attempts": max_retries + 1}
+  create: []

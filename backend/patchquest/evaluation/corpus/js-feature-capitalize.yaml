@@ -1,0 +1,51 @@
+schema: 1
+id: js-feature-capitalize
+category: frontend
+difficulty: easy
+task: Add a capitalize(str) helper to strings.js (first letter upper-case, rest unchanged, empty string
+  stays empty) and export it.
+files:
+  package.json: |
+    {"name": "strings", "version": "1.0.0", "scripts": {"test": "node --test"}}
+  strings.js: |
+    function trimAll(s) {
+      return s.trim();
+    }
+
+    module.exports = { trimAll };
+  strings.test.js: |
+    const test = require('node:test');
+    const assert = require('node:assert');
+    const { capitalize } = require('./strings');
+
+    test('capitalizes', () => {
+      assert.strictEqual(capitalize('hello'), 'Hello');
+    });
+test_command: npm test --silent
+oracle:
+  command: npm test --silent
+  files:
+    strings.oracle.test.js: |
+      const test = require('node:test');
+      const assert = require('node:assert');
+      const { capitalize, trimAll } = require('./strings');
+
+      test('edge cases and existing export', () => {
+        assert.strictEqual(capitalize(''), '');
+        assert.strictEqual(capitalize('hELLO'), 'HELLO');
+        assert.strictEqual(trimAll('  x '), 'x');
+      });
+solution:
+  files_to_inspect:
+  - strings.js
+  edits:
+  - path: strings.js
+    search: |-
+      module.exports = { trimAll };
+    replace: |-
+      function capitalize(s) {
+        return s ? s[0].toUpperCase() + s.slice(1) : s;
+      }
+
+      module.exports = { trimAll, capitalize };
+  create: []

@@ -247,6 +247,65 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return EXIT_FAILED if any(c.status == FAIL for c in checks) else EXIT_OK
 
 
+def _cmd_eval(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from patchquest.evaluation import compare, load_corpus, run_eval
+
+    if args.eval_cmd == "list":
+        tasks = load_corpus(args.corpus, args.filter)
+        if args.json:
+            _emit_json([{"id": t.id, "category": t.category, "difficulty": t.difficulty, "task": t.task} for t in tasks])
+        else:
+            for t in tasks:
+                print(f"{t.id:34s} {t.category:12s} {t.difficulty:7s} {t.task[:70]}")
+        return EXIT_OK
+
+    if args.eval_cmd == "compare":
+        base, new = json.loads(Path(args.base).read_text()), json.loads(Path(args.new).read_text())
+        try:
+            diff = compare(base, new)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        if args.json:
+            _emit_json(diff)
+        else:
+            sr = diff["success_rate"]
+            print(f"success rate {sr['base']:.1%} -> {sr['new']:.1%} ({sr['delta']:+.1%})")
+            print(f"regressions: {', '.join(diff['regressions']) or 'none'}")
+            print(f"fixes:       {', '.join(diff['fixes']) or 'none'}")
+        return EXIT_FAILED if diff["regressions"] else EXIT_OK
+
+    def progress(r) -> None:
+        if not args.json:
+            print(f"{ICON['ok'] if r.status == 'success' else ICON['warn'] if r.status == 'partial' else ICON['fail']} "
+                  f"{r.id:34s} {r.status:8s} {r.failure_reason or '':18s} calls={r.model_calls} {r.wall_s}s", file=sys.stderr)
+
+    try:
+        report = asyncio.run(run_eval(corpus=args.corpus, only=args.filter, provider=args.provider, model=args.model,
+                                      base_url=args.base_url, time_limit=args.timeout, progress=progress))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    data = report.to_dict()
+    if args.out:
+        Path(args.out).write_text(json.dumps(data, indent=2, default=str))
+    overall = data["summary"]["overall"]
+    if args.json:
+        _emit_json(data)
+    else:
+        print(f"\nsuccess {overall['success']}/{overall['tasks']} ({overall['success_rate']:.1%})  "
+              f"partial {overall['partial']}  failure {overall['failure']}  tokens {data['summary']['totals']['tokens']}")
+        for cat, b in data["summary"]["by_category"].items():
+            print(f"  {cat:12s} {b['success']}/{b['tasks']}")
+        if data["summary"]["failure_reasons"]:
+            print("  failure reasons:", data["summary"]["failure_reasons"])
+        if args.out:
+            print(f"results written to {args.out}")
+    return EXIT_FAILED if overall["success_rate"] < args.fail_under else EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -303,6 +362,24 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--api-key-env", help="env var holding the key for --url")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
     d.add_argument("--json", action="store_true")
+    ev = sub.add_parser("eval", help="measure PatchQuest against the evaluation corpus")
+    esub = ev.add_subparsers(dest="eval_cmd", required=True)
+    el = esub.add_parser("list", help="list corpus tasks")
+    er = esub.add_parser("run", help="run the corpus")
+    ec = esub.add_parser("compare", help="compare two result files; exit 1 on regressions")
+    for x in (el, er):
+        x.add_argument("--corpus", help="directory of task YAML files (default: the bundled corpus)")
+        x.add_argument("--filter", help="task ids and/or categories, comma-separated")
+        x.add_argument("--json", action="store_true")
+    er.add_argument("--provider", default="scripted", help="'scripted' replays the reference solutions (default)")
+    er.add_argument("--model")
+    er.add_argument("--base-url")
+    er.add_argument("--timeout", type=float, default=300, help="seconds per task")
+    er.add_argument("--out", help="write the full JSON results here")
+    er.add_argument("--fail-under", type=float, default=0.0, help="exit 1 if the success rate is lower")
+    ec.add_argument("base")
+    ec.add_argument("new")
+    ec.add_argument("--json", action="store_true")
     sv = sub.add_parser("serve", help="start the API server")
     sv.add_argument("--host")
     sv.add_argument("--port", type=int)
@@ -315,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         return asyncio.run(_run(args))
     handlers = {"status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
-                "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve}
+                "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
+                "eval": _cmd_eval}
     return handlers[args.cmd](args)
 
 

@@ -1,0 +1,46 @@
+schema: 1
+id: bugfix-leap-year
+category: bug_fix
+difficulty: easy
+task: is_leap_year() in calendar_utils.py gets century years wrong. Fix it to follow the Gregorian rules.
+files:
+  calendar_utils.py: |
+    def is_leap_year(year):
+        return year % 4 == 0 or year % 400 == 0
+  tests/test_calendar.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from calendar_utils import is_leap_year
+
+
+    class T(unittest.TestCase):
+        def test_century_not_divisible_by_400(self):
+            self.assertFalse(is_leap_year(1900))
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_calendar_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      from calendar_utils import is_leap_year
+
+
+      class O(unittest.TestCase):
+          def test_rules(self):
+              self.assertTrue(is_leap_year(2000))
+              self.assertTrue(is_leap_year(2024))
+              self.assertFalse(is_leap_year(2100))
+              self.assertFalse(is_leap_year(2023))
+solution:
+  files_to_inspect:
+  - calendar_utils.py
+  edits:
+  - path: calendar_utils.py
+    search: |2-
+          return year % 4 == 0 or year % 400 == 0
+    replace: |2-
+          return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+  create: []

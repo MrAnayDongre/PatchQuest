@@ -1,0 +1,67 @@
+schema: 1
+id: security-sql-injection
+category: security_fix
+difficulty: medium
+task: get_user() in db.py builds its SQL with string formatting and is vulnerable to SQL injection. Fix
+  it.
+files:
+  db.py: |
+    def get_user(conn, name):
+        cur = conn.execute(f"SELECT id, name FROM users WHERE name = '{name}'")
+        return cur.fetchone()
+  tests/test_db.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    import sqlite3
+    from db import get_user
+
+
+    def make():
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO users (name) VALUES ('alice'), ('bob')")
+        return conn
+
+
+    class T(unittest.TestCase):
+        def test_injection_returns_nothing(self):
+            self.assertIsNone(get_user(make(), "x' OR '1'='1"))
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_db_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      import sqlite3
+      from db import get_user
+
+
+      class O(unittest.TestCase):
+          def setUp(self):
+              self.conn = sqlite3.connect(":memory:")
+              self.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+              self.conn.execute("INSERT INTO users (name) VALUES ('alice'), ('o''brien')")
+
+          def test_normal_lookup(self):
+              self.assertEqual(get_user(self.conn, "alice")[1], "alice")
+
+          def test_quote_in_legitimate_name(self):
+              self.assertEqual(get_user(self.conn, "o'brien")[1], "o'brien")
+
+          def test_stacked_and_comment_payloads(self):
+              self.assertIsNone(get_user(self.conn, "alice'; DROP TABLE users; --"))
+              self.assertIsNone(get_user(self.conn, "' OR 1=1 --"))
+              self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0], 2)
+solution:
+  files_to_inspect:
+  - db.py
+  edits:
+  - path: db.py
+    search: |2-
+          cur = conn.execute(f"SELECT id, name FROM users WHERE name = '{name}'")
+    replace: |2-
+          cur = conn.execute("SELECT id, name FROM users WHERE name = ?", (name,))
+  create: []
