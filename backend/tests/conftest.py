@@ -1,26 +1,31 @@
-"""Shared test fixtures."""
+"""Global test configuration: one isolation fixture for every test.
 
-import tempfile
-from pathlib import Path
+Every test gets a fresh SQLite database, default configuration, an isolated workspace directory and
+clean process-wide registries, so tests cannot leak state into each other. Layer-specific fixtures live
+in ``tests/<layer>/conftest.py``; reusable helpers live in ``tests/support``.
+"""
 
 import pytest
 
+from patchquest.agents import providers_openai_compatible as _poc
+from patchquest.agents import roles as _roles
+from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.config import AppConfig, set_config
+from patchquest.database import init_db, set_db_path
 
 
 @pytest.fixture(autouse=True)
-def isolate_config():
-    """Ensure tests use default config, not a local config.yaml."""
+def isolated_runtime(tmp_path_factory, tmp_path, monkeypatch):
+    # The database lives outside tmp_path: many tests use tmp_path itself as the repository under test.
+    set_db_path(tmp_path_factory.mktemp("state") / "patchquest.db")
+    init_db()
     set_config(AppConfig())
+    monkeypatch.setattr("patchquest.runtime.workspace.WORKSPACE_BASE", tmp_path_factory.mktemp("workspaces"))
+    monkeypatch.setattr(_roles, "BACKOFF_SECONDS", (0, 0))
+    for var in ("PATCHQUEST_API_TOKEN", "PATCHQUEST_DB", "PATCHQUEST_CONFIG"):
+        monkeypatch.delenv(var, raising=False)
+    _poc._UNSUPPORTED.clear()
+    _roles._CONSTRAINED_UNRELIABLE.clear()
+    ScriptedProvider.scripts.clear()
     yield
-
-
-def _make_test_repo() -> str:
-    """A tiny private repository. Tests must never index real host directories like /tmp."""
-    root = Path(tempfile.mkdtemp(prefix="pq-test-repo-"))
-    (root / "README.md").write_text("# Test Repo\n\nA tiny repository for pipeline tests.\n")
-    (root / "app.py").write_text("def main():\n    return 0\n")
-    return str(root)
-
-
-TEST_REPO = _make_test_repo()
+    set_config(AppConfig())

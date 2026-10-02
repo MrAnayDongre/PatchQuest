@@ -5,9 +5,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     pool: 'forks',
-    setupFiles: ['src/test/setup.ts'],
+    setupFiles: ['tests/setup.ts'],
   },
   server: {
     port: 5173,

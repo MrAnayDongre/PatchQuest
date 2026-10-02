@@ -1,0 +1,149 @@
+"""API boundary over real HTTP (ASGI): authentication, Host validation, repo_path policy, run lifecycle, crash recovery.
+
+Invariants: with a token configured every route except /api/health requires it; foreign Host headers are rejected;
+a run against a system directory is refused before anything is stored; finished runs leave no active task behind;
+in-flight runs left by a dead process become 'interrupted' and their approvals expire.
+"""
+
+import asyncio
+import uuid
+
+import httpx
+import pytest
+
+from patchquest.config import AppConfig, set_config
+from patchquest.database import get_db, now_iso
+from patchquest.recovery import recover_interrupted_runs
+from patchquest.security import (
+    RepoPathError,
+    check_startup_policy,
+    is_loopback,
+    validate_repo_path,
+)
+
+
+def client(headers=None):
+    from patchquest.main import app
+
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost", headers=headers or {})
+
+
+class TestRepoPathPolicy:
+    @pytest.mark.parametrize("bad", ["/", "/etc", "/etc/ssh", "/usr/lib", "/proc", "/nonexistent-dir-xyz", "", "~"])
+    def test_rejected(self, bad):
+        with pytest.raises(RepoPathError):
+            validate_repo_path(bad)
+
+    def test_file_is_not_a_repo(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        with pytest.raises(RepoPathError):
+            validate_repo_path(str(f))
+
+    def test_credentials_directory_rejected(self, tmp_path, monkeypatch):
+        import os
+        ssh = os.path.expanduser("~/.ssh")
+        if os.path.isdir(ssh):
+            with pytest.raises(RepoPathError):
+                validate_repo_path(ssh)
+
+    def test_symlink_to_system_dir_rejected(self, tmp_path):
+        link = tmp_path / "innocent"
+        link.symlink_to("/etc")
+        with pytest.raises(RepoPathError):
+            validate_repo_path(str(link))
+
+    def test_allowed_roots_enforced(self, tmp_path):
+        inside, outside = tmp_path / "work" / "p", tmp_path / "other"
+        inside.mkdir(parents=True), outside.mkdir()
+        cfg = AppConfig()
+        cfg.safety.allowed_roots = [str(tmp_path / "work")]
+        set_config(cfg)
+        assert validate_repo_path(str(inside)) == str(inside.resolve())
+        with pytest.raises(RepoPathError):
+            validate_repo_path(str(outside))
+
+
+class TestStartupPolicy:
+    def test_loopback_detection(self):
+        assert is_loopback("127.0.0.1") and is_loopback("localhost") and is_loopback("::1")
+        assert not is_loopback("0.0.0.0") and not is_loopback("192.168.1.5")
+
+    def test_refuses_public_bind_without_token(self):
+        with pytest.raises(RuntimeError, match="without authentication"):
+            check_startup_policy("0.0.0.0")
+
+    def test_public_bind_allowed_with_token(self, monkeypatch):
+        monkeypatch.setenv("PATCHQUEST_API_TOKEN", "x" * 32)
+        check_startup_policy("0.0.0.0")
+
+    def test_default_config_binds_loopback(self):
+        assert AppConfig().host == "127.0.0.1"
+
+
+class TestHttpBoundary:
+    @pytest.mark.asyncio
+    async def test_run_against_system_directory_is_rejected(self):
+        async with client() as c:
+            r = await c.post("/api/runs", json={"repo_path": "/etc", "task": "inspect", "provider": "mock"})
+        assert r.status_code == 400 and "system location" in r.json()["detail"]
+        with get_db() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_token_required_when_configured(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PATCHQUEST_API_TOKEN", "s3cret-token-value")
+        async with client() as c:
+            assert (await c.get("/api/health")).status_code == 200  # liveness stays open
+            assert (await c.get("/api/runs")).status_code == 401
+            assert (await c.get("/api/runs", headers={"Authorization": "Bearer wrong"})).status_code == 401
+            assert (await c.get("/api/runs", headers={"Authorization": "Bearer s3cret-token-value"})).status_code == 200
+            r = await c.post("/api/runs", json={"repo_path": str(tmp_path), "task": "x"})
+            assert r.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_foreign_host_header_rejected(self):
+        from patchquest.main import app
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://evil.example.com") as c:
+            r = await c.get("/api/health")
+        assert r.status_code == 400  # DNS-rebinding defence
+
+    @pytest.mark.asyncio
+    async def test_run_lifecycle_cleans_up_and_supports_cancel(self, tmp_path):
+        from patchquest.application import get_service
+
+        service = get_service()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "README.md").write_text("# r\n")
+        async with client() as c:
+            r = await c.post("/api/runs", json={"repo_path": str(repo), "task": "Summarize. Do not modify files.",
+                                                "provider": "mock"})
+            assert r.status_code == 200
+            run_id = r.json()["id"]
+            for _ in range(200):
+                if not service.is_active(run_id):
+                    break
+                await asyncio.sleep(0.05)
+            assert not service.is_active(run_id) and run_id not in service._tasks
+            assert (await c.post(f"/api/runs/{run_id}/cancel")).status_code == 409  # finished: nothing to cancel
+
+
+class TestRecovery:
+    def test_in_flight_runs_are_marked_interrupted_and_approvals_expire(self):
+        rid = str(uuid.uuid4())
+        now = now_iso()
+        with get_db() as conn:
+            conn.execute("INSERT INTO runs (id, repo_path, task, status, current_phase, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (rid, "/x", "t", "running", "testing", now, now))
+            conn.execute("INSERT INTO approvals (id, run_id, type, command, reason, status, created_at) VALUES (?,?,?,?,?,?,?)",
+                         ("a1", rid, "command", "x", "r", "pending", now))
+        assert recover_interrupted_runs() == 1
+        with get_db() as conn:
+            run = conn.execute("SELECT status, outcome FROM runs WHERE id = ?", (rid,)).fetchone()
+            appr = conn.execute("SELECT status FROM approvals WHERE id = 'a1'").fetchone()
+            ev = conn.execute("SELECT type, phase FROM run_events WHERE run_id = ?", (rid,)).fetchall()
+        assert run["status"] == "interrupted" and appr["status"] == "expired"
+        assert [(e["type"], e["phase"]) for e in ev] == [("run_interrupted", "testing")]
+        assert recover_interrupted_runs() == 0  # idempotent

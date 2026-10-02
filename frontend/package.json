@@ -8,7 +8,9 @@
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:features": "vitest run tests/features",
+    "test:components": "vitest run tests/components"
   },
   "dependencies": {
     "react": "^18.3.1",

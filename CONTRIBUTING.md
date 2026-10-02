@@ -62,3 +62,7 @@ Run the backend on port 8000 and the frontend dev server on port 5173.
 ## Questions
 
 Open a GitHub issue for bugs, feature requests, or design discussions before large refactors.
+
+## Testing
+
+Tests are organised by layer (`unit`, `integration`, `e2e`) and subsystem; see [backend/tests/README.md](backend/tests/README.md) for the layout, commands and where a new test belongs.
