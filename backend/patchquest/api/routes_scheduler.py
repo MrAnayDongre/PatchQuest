@@ -16,6 +16,7 @@ from patchquest.scheduler.scheduler import (
     update_task,
 )
 from patchquest.scheduler.scheduler_loop import is_running
+from patchquest.security import RepoPathError, validate_repo_path
 from patchquest.scheduler.scheduler_models import (
     CreateScheduledTaskRequest,
     ScheduledRunHistoryResponse,
@@ -51,6 +52,10 @@ async def get_tasks() -> list[ScheduledTaskResponse]:
 
 @router.post("/tasks", response_model=ScheduledTaskResponse)
 async def create_scheduled_task(req: CreateScheduledTaskRequest) -> ScheduledTaskResponse:
+    try:
+        req = req.model_copy(update={"repo_path": validate_repo_path(req.repo_path)})
+    except RepoPathError as e:
+        raise HTTPException(400, str(e))
     try:
         task_id = create_task(
             title=req.title,

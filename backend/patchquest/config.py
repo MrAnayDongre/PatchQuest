@@ -38,6 +38,8 @@ class SafetyConfig(BaseModel):
     env_passthrough: list[str] = Field(default_factory=list)
     # Seconds a human has to answer an approval request before it is treated as denied.
     approval_timeout_seconds: int = 300
+    # When non-empty, runs may only target repositories inside one of these directories.
+    allowed_roots: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=lambda: [
         "~/.ssh", "~/.aws", "~/.gcp", "~/.azure",
         "~/.config/gcloud", "~/.config/gh",
@@ -155,6 +157,10 @@ class AppConfig(BaseModel):
     db_path: str = "patchquest.db"
     host: str = "127.0.0.1"
     port: int = 8000
+    # Name of the environment variable holding the API bearer token. Required when host is not loopback.
+    api_token_env: str = "PATCHQUEST_API_TOKEN"
+    # Extra Host header values accepted (the loopback names are always allowed).
+    allowed_hosts: list[str] = Field(default_factory=list)
 
 
 def load_config(config_path: str | None = None) -> AppConfig:

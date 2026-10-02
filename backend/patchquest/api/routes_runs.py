@@ -19,10 +19,24 @@ from patchquest.api.schemas import (
 from patchquest.database import get_db, insert_event, now_iso
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
+from patchquest.security import RepoPathError, validate_repo_path
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 _active_machines: dict[str, RunStateMachine] = {}
+_run_tasks: dict[str, asyncio.Task] = {}  # strong references: a bare create_task() can be garbage-collected mid-run
+
+
+def _launch(run_id: str, machine: RunStateMachine) -> None:
+    _active_machines[run_id] = machine
+    task = asyncio.get_running_loop().create_task(machine.execute())
+    _run_tasks[run_id] = task
+
+    def _done(_t: asyncio.Task) -> None:
+        _active_machines.pop(run_id, None)
+        _run_tasks.pop(run_id, None)
+
+    task.add_done_callback(_done)
 
 
 def _row_to_response(r: Any) -> RunResponse:
@@ -49,6 +63,11 @@ def _row_to_response(r: Any) -> RunResponse:
 
 @router.post("", response_model=RunResponse)
 async def create_run(req: CreateRunRequest) -> RunResponse:
+    try:
+        repo_path = validate_repo_path(req.repo_path)
+    except RepoPathError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    req = req.model_copy(update={"repo_path": repo_path})
     run_id = str(uuid.uuid4())
     now = now_iso()
 
@@ -72,8 +91,7 @@ async def create_run(req: CreateRunRequest) -> RunResponse:
         provider=provider, model=model, runtime_mode=runtime_mode,
         dry_run=req.dry_run,
     )
-    _active_machines[run_id] = machine
-    asyncio.get_event_loop().create_task(machine.execute())
+    _launch(run_id, machine)
 
     return RunResponse(
         id=run_id,
@@ -167,6 +185,15 @@ async def approve_action(run_id: str, action: ApprovalAction) -> dict[str, str]:
         await machine.resolve_approval(action.approval_id, action.approved)
 
     return {"status": "ok"}
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_run(run_id: str) -> dict[str, str]:
+    machine = _active_machines.get(run_id)
+    if machine is None:
+        raise HTTPException(409, "Run is not active")
+    machine.cancel()
+    return {"status": "cancelling"}
 
 
 @router.post("/{run_id}/reject")

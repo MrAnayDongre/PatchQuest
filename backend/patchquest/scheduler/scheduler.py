@@ -14,6 +14,9 @@ from patchquest.scheduler.schedule_calculator import compute_next_run
 logger = logging.getLogger(__name__)
 
 
+_background_runs: set = set()
+
+
 def create_task(
     title: str,
     task_prompt: str,
@@ -258,7 +261,9 @@ def _execute_task(task: dict) -> str | None:
 
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_run_and_record(machine, task["id"], run_id))
+        bg = loop.create_task(_run_and_record(machine, task["id"], run_id))
+        _background_runs.add(bg)  # keep a strong reference until it finishes
+        bg.add_done_callback(_background_runs.discard)
     except RuntimeError:
         asyncio.run(_run_and_record(machine, task["id"], run_id))
 
