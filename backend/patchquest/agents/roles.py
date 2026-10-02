@@ -6,7 +6,11 @@ import asyncio
 import json
 import logging
 import os
+import time
+from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, ValidationError
 
 from patchquest.agents.prompts import (
     ANALYSIS_SYSTEM,
@@ -18,11 +22,21 @@ from patchquest.agents.prompts import (
     REVIEWER_SYSTEM,
     SECURITY_SYSTEM,  # noqa: F401
 )
-from patchquest.agents.provider_base import ModelConfig
+from patchquest.agents.provider_base import ModelConfig, ProviderResponse
 from patchquest.agents.provider_registry import get_provider
+from patchquest.agents.structured_outputs import (
+    IntakeOutput,
+    PatchOutput,
+    PlannerOutput,
+    ReviewerOutput,
+    coerce,
+    json_schema_for,
+)
 from patchquest.config import get_config
 from patchquest.context import build_context, render_context
+from patchquest.database import get_db, now_iso
 from patchquest.orchestrator.run_context import RunContext
+from patchquest.providers.catalog import PROVIDER_CATALOG
 from patchquest.tools.secret_guard import redact_secrets
 
 logger = logging.getLogger(__name__)
@@ -33,14 +47,24 @@ BACKOFF_SECONDS = (0.5, 1.5)
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
+class BudgetExceeded(RuntimeError):
+    """The run used up its model-call or token budget."""
+
+
+@dataclass
+class Completion:
+    text: str
+    response: ProviderResponse
+    provider: str
+    model: str
+
+
 def _resolve_model(role_name: str, ctx: RunContext | None):
     """Return ``(provider, ModelConfig)`` for a role, honouring the run's provider choice."""
     run_provider = ctx.provider if ctx else None
     run_model = ctx.model if ctx else None
 
     if run_provider and run_provider != "mock":
-        from patchquest.api.routes_providers import PROVIDER_CATALOG
-
         catalog = next((p for p in PROVIDER_CATALOG if p["name"] == run_provider), None)
         nvidia = run_provider == "nvidia"
         return get_provider(run_provider), ModelConfig(
@@ -51,6 +75,8 @@ def _resolve_model(role_name: str, ctx: RunContext | None):
             max_tokens=4096 if nvidia else 2048,
             temperature=1.0 if nvidia else 0.2,
             top_p=1.0 if nvidia else None,
+            timeout_seconds=float((catalog or {}).get("timeout_seconds", 60)),
+            capability_hints=dict((catalog or {}).get("capabilities", {})),
         )
 
     config = get_config()
@@ -75,23 +101,91 @@ def _is_transient(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
 
 
-async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None) -> str:
+def _response_format(provider, model_config: ModelConfig, schema: type[BaseModel] | None) -> dict | None:
+    """Ask for constrained output only when the provider declares support for it."""
+    if schema is None:
+        return None
+    caps = provider.capabilities(model_config)
+    if caps.json_schema:
+        return {"type": "json_schema",
+                "json_schema": {"name": schema.__name__, "schema": json_schema_for(schema), "strict": False}}
+    if caps.json_object:
+        return {"type": "json_object"}
+    return None
+
+
+def _charge_budget(ctx: RunContext | None) -> None:
+    if ctx is None:
+        return
+    cfg = get_config().agent
+    if cfg.max_model_calls and ctx.model_calls >= cfg.max_model_calls:
+        raise BudgetExceeded(f"model-call budget exhausted ({cfg.max_model_calls} calls)")
+    if cfg.max_total_tokens and ctx.tokens_used >= cfg.max_total_tokens:
+        raise BudgetExceeded(f"token budget exhausted ({cfg.max_total_tokens} tokens)")
+    ctx.model_calls += 1
+
+
+def _record(ctx: RunContext | None, role: str, provider: str, model: str, messages: list[dict[str, str]],
+            started: str, duration_ms: int, response: ProviderResponse | None, status: str,
+            error: str | None = None) -> int | None:
+    """Persist one model call. Observability must never break a run, so failures are logged."""
+    if ctx is None:
+        return None
+    usage = (response.usage if response else {}) or {}
+    prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+    completion = usage.get("completion_tokens", usage.get("output_tokens"))
+    ctx.tokens_used += int(prompt or 0) + int(completion or 0)
+    keep_io = get_config().agent.record_model_io
+    try:
+        with get_db() as conn:
+            cur = conn.execute(
+                """INSERT INTO model_calls (run_id, role, provider, model, started_at, duration_ms, prompt_tokens,
+                   completion_tokens, attempts, status, degraded, request_json, response_text, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (ctx.run_id, role, provider, model, started, duration_ms, prompt, completion,
+                 response.attempts if response else 1, status,
+                 json.dumps(response.degraded) if response and response.degraded else None,
+                 redact_secrets(json.dumps(messages)) if keep_io else None,
+                 redact_secrets(response.content) if (keep_io and response) else None,
+                 redact_secrets(error) if error else None),
+            )
+            return cur.lastrowid
+    except Exception:
+        logger.warning("could not record model call for run %s", ctx.run_id, exc_info=True)
+        return None
+
+
+async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None,
+                    schema: type[BaseModel] | None = None,
+                    extra_messages: list[dict[str, str]] | None = None) -> Completion:
     provider, model_config = _resolve_model(role_name, ctx)
 
     valid, err = provider.validate_config(model_config)
     if not valid:
         raise RuntimeError(f"Provider '{model_config.provider}' configuration error: {err}")
+    _charge_budget(ctx)
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
+        *(extra_messages or []),
     ]
+    response_format = _response_format(provider, model_config, schema)
+    started_at, t0 = now_iso(), time.monotonic()
 
     last: BaseException | None = None
     for attempt in range(MAX_ATTEMPTS):
         try:
-            response = await provider.complete(messages, model_config)
-            return response.content or ""
+            response = await provider.complete(messages, model_config, response_format)
+            call_id = await asyncio.to_thread(
+                _record, ctx, role_name, model_config.provider, model_config.model, messages, started_at,
+                int((time.monotonic() - t0) * 1000), response, "ok")
+            if ctx and ctx.event_sink:
+                await ctx.event_sink("model_call", {
+                    "call_id": call_id, "role": role_name, "provider": model_config.provider,
+                    "model": model_config.model, "duration_ms": int((time.monotonic() - t0) * 1000),
+                    "usage": response.usage, "degraded": response.degraded, "attempts": response.attempts})
+            return Completion(response.content or "", response, model_config.provider, model_config.model)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -110,16 +204,55 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
         key_value = os.environ.get(model_config.api_key_env, "")
         if key_value:
             message = message.replace(key_value, "***REDACTED***")
+    await asyncio.to_thread(_record, ctx, role_name, model_config.provider, model_config.model, messages,
+                            started_at, int((time.monotonic() - t0) * 1000), None, "error", message)
     raise RuntimeError(f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}") from last
 
 
-async def _call_role(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None) -> dict[str, Any]:
-    return _parse_json_response(await _complete(role_name, system_prompt, user_content, ctx))
+async def _call_role(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None,
+                     schema: type[BaseModel] | None = None) -> dict[str, Any]:
+    """Call a role and return its parsed JSON.
+
+    With a ``schema`` the reply is validated; an invalid reply gets up to
+    ``agent.format_repair_attempts`` follow-up calls that quote the validation error. A reply that
+    still does not conform comes back as ``{"parse_error": True, ...}`` (callers already handle it).
+    """
+    completion = await _complete(role_name, system_prompt, user_content, ctx, schema)
+    parsed = _parse_json_response(completion.text)
+    if schema is None:
+        return parsed
+
+    attempts_left = get_config().agent.format_repair_attempts
+    error = _validation_error(schema, parsed)
+    while error and attempts_left > 0:
+        attempts_left -= 1
+        followup = [
+            {"role": "assistant", "content": completion.text},
+            {"role": "user", "content": f"Your reply did not match the required JSON schema: {error}\n"
+                                        "Reply again with ONLY a JSON object that matches the schema."},
+        ]
+        completion = await _complete(role_name, system_prompt, user_content, ctx, schema, followup)
+        parsed = _parse_json_response(completion.text)
+        error = _validation_error(schema, parsed)
+    if error:
+        return {"raw_response": completion.text, "parse_error": True, "validation_error": error}
+    return coerce(schema, parsed)
+
+
+def _validation_error(schema: type[BaseModel], parsed: dict[str, Any]) -> str | None:
+    if parsed.get("parse_error"):
+        return "the reply was not valid JSON"
+    try:
+        coerce(schema, parsed)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        return f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}"
+    return None
 
 
 async def _call_role_text(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None) -> str:
     """Call an LLM role and return raw text (no JSON parsing)."""
-    return (await _complete(role_name, system_prompt, user_content, ctx)).strip()
+    return (await _complete(role_name, system_prompt, user_content, ctx)).text.strip()
 
 
 def _parse_json_response(content: str) -> dict[str, Any]:
@@ -138,7 +271,7 @@ def _parse_json_response(content: str) -> dict[str, Any]:
 
 async def run_intake_role(ctx: RunContext) -> dict[str, Any]:
     user_content = f"Task: {ctx.task}\nRepo: {ctx.repo_path}"
-    return await _call_role("intake", INTAKE_SYSTEM, user_content, ctx=ctx)
+    return await _call_role("intake", INTAKE_SYSTEM, user_content, ctx=ctx, schema=IntakeOutput)
 
 
 async def run_planner_role(ctx: RunContext) -> dict[str, Any]:
@@ -146,7 +279,7 @@ async def run_planner_role(ctx: RunContext) -> dict[str, Any]:
     repo_map = get_repo_map(ctx.repo_path)
     file_summary = "\n".join(f["file_path"] for f in repo_map["files"][:50])
     user_content = f"Task: {ctx.task}\nRepo files:\n{file_summary}"
-    return await _call_role("planner", PLANNER_SYSTEM, user_content, ctx=ctx)
+    return await _call_role("planner", PLANNER_SYSTEM, user_content, ctx=ctx, schema=PlannerOutput)
 
 
 async def run_context_builder(ctx: RunContext) -> dict[str, Any]:
@@ -203,7 +336,7 @@ async def run_patch_role(ctx: RunContext) -> dict[str, Any]:
         f'<file path="{path}">\n{str(content)[:8000]}\n</file>' for path, content in list(selected.items())[:8]
     ) or "(no files selected)"
     user_content = f"Task: {ctx.task}\n\nRepository files:\n{files}"
-    return await _call_role("coder", PATCH_SYSTEM, user_content, ctx=ctx)
+    return await _call_role("coder", PATCH_SYSTEM, user_content, ctx=ctx, schema=PatchOutput)
 
 
 async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], workspace_path: str, attempt: int) -> dict[str, Any]:
@@ -234,7 +367,7 @@ async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], works
         f"Failing commands:\n<output>\n{failure_text}\n</output>\n\n"
         f"Current repository files:\n{render_context(items)}"
     )
-    return await _call_role("coder", REPAIR_SYSTEM, user_content, ctx=ctx)
+    return await _call_role("coder", REPAIR_SYSTEM, user_content, ctx=ctx, schema=PatchOutput)
 
 
 def _build_readme_sentence_patch(repo_path: str, task: str) -> dict[str, Any] | None:
@@ -271,4 +404,4 @@ async def run_reviewer_role(ctx: RunContext) -> dict[str, Any]:
         f"Task: {ctx.task}\nDiff:\n<output>\n{ctx.proposed_diff or 'No changes'}\n</output>\n"
         f"Files: {ctx.applied_files}\nValidation verdict: {getattr(ctx, 'verdict', 'unknown')}"
     )
-    return await _call_role("reviewer", REVIEWER_SYSTEM, user_content, ctx=ctx)
+    return await _call_role("reviewer", REVIEWER_SYSTEM, user_content, ctx=ctx, schema=ReviewerOutput)

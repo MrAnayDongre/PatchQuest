@@ -98,6 +98,25 @@ CREATE TABLE IF NOT EXISTS runs (
     verdict TEXT
 );
 
+CREATE TABLE IF NOT EXISTS model_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    started_at TEXT NOT NULL,
+    duration_ms INTEGER,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    attempts INTEGER DEFAULT 1,
+    status TEXT NOT NULL,
+    degraded TEXT,
+    request_json TEXT,
+    response_text TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_model_calls_run ON model_calls(run_id, id);
+
 CREATE TABLE IF NOT EXISTS run_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(id),

@@ -128,8 +128,13 @@ class RunStateMachine:
         self._approval_results: dict[str, bool] = {}
         self._workspace: ShadowWorkspace | None = None  # created on demand
         self._blocked = False
+        self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._cancelled = asyncio.Event()
+        self.ctx.event_sink = self._publish
+
+    async def _publish(self, event_type: str, payload: dict[str, Any]) -> None:
+        await self._emit(event_type, phase=self._current_phase, message=payload.get("role"), payload=payload)
 
     # ------------------------------------------------------------------ driver
     def cancel(self) -> None:
@@ -169,6 +174,7 @@ class RunStateMachine:
 
     async def _run_phase(self, phase: Phase) -> None:
         self.phase_statuses[phase] = PhaseStatus.RUNNING
+        self._current_phase = phase.value
         await self._emit("phase_started", phase=phase.value, status="running",
                          message=f"Starting {phase.value}")
         self._update_run_phase(phase.value)

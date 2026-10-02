@@ -144,6 +144,13 @@ class AgentConfig(BaseModel):
     # on_no_regression: also promote when the only remaining failures already fail without the patch.
     # always: promote regardless. never: leave the diff for review.
     promote_policy: str = "on_green"
+    # Bounds on model usage per run (principle: every autonomous loop has limits).
+    max_model_calls: int = 40
+    max_total_tokens: int = 0  # 0 = unlimited
+    # One extra call, with the validation error, when a reply does not match the role's schema.
+    format_repair_attempts: int = 1
+    # Persist prompts and responses (needed for replay). Disable if prompts must not be stored.
+    record_model_io: bool = True
 
 
 class AppConfig(BaseModel):

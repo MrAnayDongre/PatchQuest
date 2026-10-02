@@ -195,7 +195,10 @@ def _cmd_approve(args: argparse.Namespace) -> int:
 
 
 def _cmd_providers(args: argparse.Namespace) -> int:
-    from patchquest.api.routes_providers import PROVIDER_CATALOG
+    from patchquest.providers.catalog import PROVIDER_CATALOG
+
+    if args.probe or args.url:
+        return _probe_providers(args)
 
     rows = []
     for p in PROVIDER_CATALOG:
@@ -208,6 +211,25 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     for r in rows:
         mark = ICON["ok"] if r["configured"] else ICON["warn"]
         print(f"{mark} {r['name']:<18} {r['default_model'] or '':<32} {r['key_env'] or ''}")
+    return EXIT_OK
+
+
+def _probe_providers(args: argparse.Namespace) -> int:
+    from patchquest.providers.probe import probe_endpoint, probe_local_engines
+
+    if args.url:
+        results = {args.url: asyncio.run(probe_endpoint(args.url, args.api_key_env))}
+    else:
+        results = asyncio.run(probe_local_engines())
+    if args.json:
+        _emit_json(results)
+        return EXIT_OK
+    for name, r in results.items():
+        if r["ok"]:
+            ctx = f" ctx={r['context_length']}" if r.get("context_length") else ""
+            print(f"{ICON['ok']} {name:<10} up  {r['latency_ms']}ms  models={', '.join(r['models'][:3]) or '-'}{ctx}")
+        else:
+            print(f"{ICON['info']} {name:<10} down  {r.get('error')}")
     return EXIT_OK
 
 
@@ -275,6 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--server", default="http://127.0.0.1:8000")
     pr = sub.add_parser("providers", help="list model providers and whether they are configured")
     pr.add_argument("--json", action="store_true")
+    pr.add_argument("--probe", action="store_true", help="check which local serving engines are running")
+    pr.add_argument("--url", help="probe one OpenAI-compatible base URL (e.g. http://localhost:30000/v1)")
+    pr.add_argument("--api-key-env", help="env var holding the key for --url")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
     d.add_argument("--json", action="store_true")
     sv = sub.add_parser("serve", help="start the API server")

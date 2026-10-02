@@ -175,7 +175,7 @@ def check_patch_engine() -> Check:
 
 
 def check_providers() -> list[Check]:
-    from patchquest.api.routes_providers import PROVIDER_CATALOG
+    from patchquest.providers.catalog import PROVIDER_CATALOG
 
     out = []
     for p in PROVIDER_CATALOG:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -148,3 +149,7 @@ class RunContext:
     outcome: str | None = None  # applied | rejected | conflict | no_changes | read_only | blocked
     review: dict[str, Any] | None = None
     workspace_path: str | None = None
+    model_calls: int = 0
+    tokens_used: int = 0
+    # Set by the state machine so roles can publish timeline events without importing it.
+    event_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = field(default=None, repr=False, compare=False)

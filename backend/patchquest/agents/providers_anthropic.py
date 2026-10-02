@@ -40,7 +40,7 @@ class AnthropicProvider(ProviderBase):
             "anthropic-version": "2023-06-01",
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages", json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
