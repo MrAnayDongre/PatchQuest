@@ -15,6 +15,7 @@ from patchquest.orchestrator.state_machine import (
     _normalize_plan,
 )
 from patchquest.reports.final_report import generate_report, generate_report_from_run_record
+from tests.conftest import TEST_REPO
 
 
 @pytest.fixture(autouse=True)
@@ -68,15 +69,15 @@ class TestReadOnlyDetection:
         assert ctx.read_only is False  # must be set explicitly
 
     def test_state_machine_sets_read_only(self):
-        sm = RunStateMachine("r1", "/tmp", "Summarize the repo. Do not modify files.")
+        sm = RunStateMachine("r1", TEST_REPO, "Summarize the repo. Do not modify files.")
         assert sm.ctx.read_only is True
 
     def test_state_machine_dry_run(self):
-        sm = RunStateMachine("r1", "/tmp", "Fix the bug", dry_run=True)
+        sm = RunStateMachine("r1", TEST_REPO, "Fix the bug", dry_run=True)
         assert sm.ctx.read_only is True
 
     def test_state_machine_normal_task(self):
-        sm = RunStateMachine("r1", "/tmp", "Fix the bug in login.py")
+        sm = RunStateMachine("r1", TEST_REPO, "Fix the bug in login.py")
         assert sm.ctx.read_only is False
 
     def test_modify_readme_with_other_files_constraint_is_mutating(self):
@@ -146,7 +147,7 @@ class TestReadOnlyDetection:
             'Modify README.md by adding exactly this one sentence somewhere appropriate: '
             '"Docker NVIDIA mutation integration." Do not modify any other files.'
         )
-        sm = RunStateMachine("mut1", "/tmp", task)
+        sm = RunStateMachine("mut1", TEST_REPO, task)
         assert sm.ctx.read_only is False
 
 
@@ -247,7 +248,7 @@ class TestPatchingHardening:
     @pytest.mark.asyncio
     async def test_read_only_skips_patching(self):
         _insert_run("r1")
-        sm = RunStateMachine("r1", "/tmp", "Summarize architecture. Do not modify files.")
+        sm = RunStateMachine("r1", TEST_REPO, "Summarize architecture. Do not modify files.")
         assert sm.ctx.read_only is True
         await sm._phase_patching()
         assert sm.phase_statuses[Phase.PATCHING] == PhaseStatus.SKIPPED
@@ -255,7 +256,7 @@ class TestPatchingHardening:
     @pytest.mark.asyncio
     async def test_no_modifications_plan_skips_patching(self):
         _insert_run("r2")
-        sm = RunStateMachine("r2", "/tmp", "Fix the bug")
+        sm = RunStateMachine("r2", TEST_REPO, "Fix the bug")
         sm.ctx.read_only = False
         sm.ctx.plan = {"plan": {"expected_patch_scope": "no modifications"}}
         await sm._phase_patching()
@@ -264,7 +265,7 @@ class TestPatchingHardening:
     @pytest.mark.asyncio
     async def test_review_skipped_when_no_diff(self):
         _insert_run("r3")
-        sm = RunStateMachine("r3", "/tmp", "Analyze repo. Do not modify files.")
+        sm = RunStateMachine("r3", TEST_REPO, "Analyze repo. Do not modify files.")
         sm.ctx.proposed_diff = None
         await sm._phase_review()
         assert sm.phase_statuses[Phase.REVIEW] == PhaseStatus.SKIPPED
@@ -273,7 +274,7 @@ class TestPatchingHardening:
     async def test_patching_with_string_context_does_not_crash(self):
         """The .items() crash that was observed in production."""
         _insert_run("r4")
-        sm = RunStateMachine("r4", "/tmp", "Fix bug")
+        sm = RunStateMachine("r4", TEST_REPO, "Fix bug")
         sm.ctx.read_only = False
         sm.ctx.selected_context = "this is a string, not a dict"  # type: ignore
         sm.ctx.plan = {"plan": {"expected_patch_scope": "1 file"}}
@@ -288,7 +289,7 @@ class TestReadOnlyRunCompletion:
     @pytest.mark.asyncio
     async def test_read_only_run_completes(self):
         _insert_run("ro-run")
-        sm = RunStateMachine("ro-run", "/tmp", "Summarize. Do not modify files.")
+        sm = RunStateMachine("ro-run", TEST_REPO, "Summarize. Do not modify files.")
         await sm.execute()
         with get_db() as conn:
             run = conn.execute("SELECT status FROM runs WHERE id = 'ro-run'").fetchone()
@@ -298,7 +299,7 @@ class TestReadOnlyRunCompletion:
     @pytest.mark.asyncio
     async def test_read_only_run_generates_report(self):
         _insert_run("ro-rpt")
-        sm = RunStateMachine("ro-rpt", "/tmp", "Analyze. Do not modify files.")
+        sm = RunStateMachine("ro-rpt", TEST_REPO, "Analyze. Do not modify files.")
         await sm.execute()
         with get_db() as conn:
             report = conn.execute("SELECT * FROM reports WHERE run_id = 'ro-rpt'").fetchone()
@@ -308,7 +309,7 @@ class TestReadOnlyRunCompletion:
     @pytest.mark.asyncio
     async def test_dry_run_skips_patching(self):
         _insert_run("dry1")
-        sm = RunStateMachine("dry1", "/tmp", "Fix the bug", dry_run=True)
+        sm = RunStateMachine("dry1", TEST_REPO, "Fix the bug", dry_run=True)
         await sm.execute()
         assert sm.phase_statuses[Phase.PATCHING] == PhaseStatus.SKIPPED
 
@@ -437,7 +438,7 @@ class TestNvidiaFreeFormPlanning:
     async def test_freeform_planning_does_not_crash_state_machine(self):
         _insert_run("nv2")
         sm = RunStateMachine(
-            "nv2", "/tmp",
+            "nv2", TEST_REPO,
             "Summarize architecture. Do not modify files.",
             provider="mock", model="mock-planner",
         )

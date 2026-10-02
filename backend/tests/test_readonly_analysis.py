@@ -15,6 +15,7 @@ from patchquest.orchestrator.phases import Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
 from patchquest.orchestrator.state_machine import RunStateMachine
 from patchquest.reports.final_report import generate_report, generate_report_from_run_record
+from tests.conftest import TEST_REPO
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +40,7 @@ class TestReadOnlyAnalysisCapture:
     @pytest.mark.asyncio
     async def test_read_only_run_stores_analysis(self):
         _insert_run("ro-analysis", "Summarize repo. Do not modify files.")
-        sm = RunStateMachine("ro-analysis", "/tmp", "Summarize repo. Do not modify files.")
+        sm = RunStateMachine("ro-analysis", TEST_REPO, "Summarize repo. Do not modify files.")
         await sm.execute()
         assert sm.ctx.analysis is not None
         assert "Hello!" in sm.ctx.analysis
@@ -48,14 +49,14 @@ class TestReadOnlyAnalysisCapture:
     @pytest.mark.asyncio
     async def test_analysis_phase_runs_for_read_only(self):
         _insert_run("ro-phase")
-        sm = RunStateMachine("ro-phase", "/tmp", "Analyze repo. Do not modify files.")
+        sm = RunStateMachine("ro-phase", TEST_REPO, "Analyze repo. Do not modify files.")
         await sm.execute()
         assert sm.phase_statuses[Phase.ANALYSIS] == PhaseStatus.COMPLETE
 
     @pytest.mark.asyncio
     async def test_analysis_skipped_for_non_read_only(self):
         _insert_run("rw-phase")
-        sm = RunStateMachine("rw-phase", "/tmp", "Fix the off-by-one error in pagination")
+        sm = RunStateMachine("rw-phase", TEST_REPO, "Fix the off-by-one error in pagination")
         await sm.execute()
         assert sm.phase_statuses[Phase.ANALYSIS] == PhaseStatus.SKIPPED
         assert sm.ctx.analysis is None
@@ -63,7 +64,7 @@ class TestReadOnlyAnalysisCapture:
     @pytest.mark.asyncio
     async def test_analysis_generated_event_emitted(self):
         _insert_run("ro-event")
-        sm = RunStateMachine("ro-event", "/tmp", "Summarize. Do not modify files.")
+        sm = RunStateMachine("ro-event", TEST_REPO, "Summarize. Do not modify files.")
         await sm.execute()
         with get_db() as conn:
             row = conn.execute(
@@ -128,7 +129,7 @@ class TestFinalReportAnalysis:
     @pytest.mark.asyncio
     async def test_end_to_end_read_only_report_has_analysis(self):
         _insert_run("ro-report", "Say hello. Do not modify files.")
-        sm = RunStateMachine("ro-report", "/tmp", "Say hello. Do not modify files.")
+        sm = RunStateMachine("ro-report", TEST_REPO, "Say hello. Do not modify files.")
         await sm.execute()
         with get_db() as conn:
             report_row = conn.execute(
@@ -166,7 +167,7 @@ class TestNonReadOnlyUnaffected:
     @pytest.mark.asyncio
     async def test_patching_still_runs_for_normal_task(self):
         _insert_run("normal")
-        sm = RunStateMachine("normal", "/tmp", "Fix the off-by-one error in pagination")
+        sm = RunStateMachine("normal", TEST_REPO, "Fix the off-by-one error in pagination")
         await sm.execute()
         assert sm.phase_statuses[Phase.ANALYSIS] == PhaseStatus.SKIPPED
         assert sm.phase_statuses[Phase.PATCHING] in (PhaseStatus.COMPLETE, PhaseStatus.SKIPPED)
@@ -184,7 +185,7 @@ class TestNonReadOnlyUnaffected:
             'Modify README.md by adding exactly this one sentence somewhere appropriate: '
             '"Docker NVIDIA mutation integration." Do not modify any other files.'
         )
-        sm = RunStateMachine("mut-readme", "/tmp", task)
+        sm = RunStateMachine("mut-readme", TEST_REPO, task)
         assert sm.ctx.read_only is False
         await sm._phase_analysis()
         assert sm.phase_statuses[Phase.ANALYSIS] == PhaseStatus.SKIPPED

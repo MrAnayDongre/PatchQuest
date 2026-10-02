@@ -22,6 +22,7 @@ from patchquest.scheduler.scheduler import (
     update_task,
     validate_timezone,
 )
+from tests.conftest import TEST_REPO
 
 
 @pytest.fixture(autouse=True)
@@ -96,36 +97,36 @@ class TestSchedulerCRUD:
         assert task["status"] == "active"
 
     def test_list_tasks(self):
-        create_task(title="A", task_prompt="t", repo_path="/tmp", schedule_type="one_shot")
-        create_task(title="B", task_prompt="t", repo_path="/tmp", schedule_type="daily", schedule_expr="09:00")
+        create_task(title="A", task_prompt="t", repo_path=TEST_REPO, schedule_type="one_shot")
+        create_task(title="B", task_prompt="t", repo_path=TEST_REPO, schedule_type="daily", schedule_expr="09:00")
         tasks = list_tasks()
         assert len(tasks) == 2
 
     def test_update_task(self):
-        tid = create_task(title="Old", task_prompt="t", repo_path="/tmp")
+        tid = create_task(title="Old", task_prompt="t", repo_path=TEST_REPO)
         update_task(tid, title="New")
         task = get_task(tid)
         assert task["title"] == "New"
 
     def test_delete_task(self):
-        tid = create_task(title="Del", task_prompt="t", repo_path="/tmp")
+        tid = create_task(title="Del", task_prompt="t", repo_path=TEST_REPO)
         assert delete_task(tid)
         tasks = list_tasks()
         assert len(tasks) == 0
 
     def test_invalid_timezone_rejected(self):
         with pytest.raises(ValueError, match="Invalid timezone"):
-            create_task(title="T", task_prompt="t", repo_path="/tmp", tz="Fake/Zone")
+            create_task(title="T", task_prompt="t", repo_path=TEST_REPO, tz="Fake/Zone")
 
     def test_empty_timezone_rejected(self):
         with pytest.raises(ValueError, match="Timezone is required"):
-            create_task(title="T", task_prompt="t", repo_path="/tmp", tz="")
+            create_task(title="T", task_prompt="t", repo_path=TEST_REPO, tz="")
         with pytest.raises(ValueError, match="Timezone is required"):
             validate_timezone("   ")
 
     def test_pause_prevents_execution(self):
         tid = create_task(
-            title="Pausable", task_prompt="t", repo_path="/tmp",
+            title="Pausable", task_prompt="t", repo_path=TEST_REPO,
             schedule_type="one_shot",
             next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
         )
@@ -134,7 +135,7 @@ class TestSchedulerCRUD:
         assert len(due) == 0
 
     def test_resume_allows_execution(self):
-        tid = create_task(title="Resumable", task_prompt="t", repo_path="/tmp")
+        tid = create_task(title="Resumable", task_prompt="t", repo_path=TEST_REPO)
         pause_task(tid)
         resume_task(tid)
         task = get_task(tid)
@@ -143,7 +144,7 @@ class TestSchedulerCRUD:
 
     def test_disabled_task_does_not_run(self):
         create_task(
-            title="Disabled", task_prompt="t", repo_path="/tmp",
+            title="Disabled", task_prompt="t", repo_path=TEST_REPO,
             schedule_type="one_shot",
             next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
         )
@@ -156,7 +157,7 @@ class TestSchedulerCRUD:
 
 class TestSchedulerExecution:
     def test_run_now_creates_history(self):
-        tid = create_task(title="RunNow", task_prompt="test task", repo_path="/tmp")
+        tid = create_task(title="RunNow", task_prompt="test task", repo_path=TEST_REPO)
         run_id = run_task_now(tid)
         assert run_id is not None
         history = get_history(tid)
@@ -167,7 +168,7 @@ class TestSchedulerExecution:
     def test_due_task_detected(self):
         past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
         create_task(
-            title="Due", task_prompt="t", repo_path="/tmp",
+            title="Due", task_prompt="t", repo_path=TEST_REPO,
             schedule_type="one_shot", next_run_at=past,
         )
         due = get_due_tasks()
@@ -176,7 +177,7 @@ class TestSchedulerExecution:
     def test_future_task_not_due(self):
         future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         create_task(
-            title="Future", task_prompt="t", repo_path="/tmp",
+            title="Future", task_prompt="t", repo_path=TEST_REPO,
             schedule_type="one_shot", next_run_at=future,
         )
         due = get_due_tasks()
@@ -184,28 +185,28 @@ class TestSchedulerExecution:
 
     def test_scheduled_docker_runtime_stored(self):
         tid = create_task(
-            title="Docker Task", task_prompt="t", repo_path="/tmp",
+            title="Docker Task", task_prompt="t", repo_path=TEST_REPO,
             runtime_mode="docker",
         )
         task = get_task(tid)
         assert task["runtime_mode"] == "docker"
 
     def test_run_now_creates_real_run_record(self):
-        tid = create_task(title="Real Run", task_prompt="add docstring", repo_path="/tmp")
+        tid = create_task(title="Real Run", task_prompt="add docstring", repo_path=TEST_REPO)
         run_id = run_task_now(tid)
         assert run_id is not None
         with get_db() as conn:
             run = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         assert run is not None
         assert run["task"] == "add docstring"
-        assert run["repo_path"] == "/tmp"
+        assert run["repo_path"] == TEST_REPO
         assert run["provider"] == "mock"
 
     def test_create_task_stores_provider_model_runtime_memory(self):
         tid = create_task(
             title="NVIDIA Task",
             task_prompt="analyze",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             provider="nvidia",
             model="openai/gpt-oss-20b",
             runtime_mode="docker",
@@ -218,7 +219,7 @@ class TestSchedulerExecution:
         assert task["memory_mode"] == "repo"
 
     def test_update_task_provider_model(self):
-        tid = create_task(title="Up", task_prompt="t", repo_path="/tmp")
+        tid = create_task(title="Up", task_prompt="t", repo_path=TEST_REPO)
         update_task(tid, provider="groq", model="llama-3.1-8b-instant", runtime_mode="docker")
         task = get_task(tid)
         assert task["provider"] == "groq"
@@ -233,7 +234,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="NVIDIA Run",
             task_prompt="summarize",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             provider="nvidia",
             model="openai/gpt-oss-20b",
             runtime_mode="docker",
@@ -250,7 +251,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="Mock Run",
             task_prompt="demo",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             provider="mock",
         )
         run_id = run_task_now(tid)
@@ -263,7 +264,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="Missing Key",
             task_prompt="fail",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             provider="nvidia",
             model="openai/gpt-oss-20b",
         )
@@ -287,7 +288,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="History Meta",
             task_prompt="t",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             provider="nvidia",
             model="openai/gpt-oss-20b",
             runtime_mode="docker",
@@ -304,7 +305,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="One Shot",
             task_prompt="t",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             schedule_type="one_shot",
             next_run_at=past,
         )
@@ -318,7 +319,7 @@ class TestSchedulerExecution:
         tid = create_task(
             title="Future",
             task_prompt="t",
-            repo_path="/tmp",
+            repo_path=TEST_REPO,
             schedule_type="one_shot",
             next_run_at=future,
         )
