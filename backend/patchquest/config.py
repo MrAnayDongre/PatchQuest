@@ -34,6 +34,10 @@ class SafetyConfig(BaseModel):
     allow_outside_repo: bool = False
     max_command_timeout: int = 60
     max_output_bytes: int = 1_000_000
+    # Extra environment variable names/patterns allowed into model-chosen commands.
+    env_passthrough: list[str] = Field(default_factory=list)
+    # Seconds a human has to answer an approval request before it is treated as denied.
+    approval_timeout_seconds: int = 300
     blocked_paths: list[str] = Field(default_factory=lambda: [
         "~/.ssh", "~/.aws", "~/.gcp", "~/.azure",
         "~/.config/gcloud", "~/.config/gh",
