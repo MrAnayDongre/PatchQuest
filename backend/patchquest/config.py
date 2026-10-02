@@ -133,6 +133,22 @@ class RepoIntelligenceConfig(BaseModel):
     ])
 
 
+class DockerConfig(BaseModel):
+    image: str = "patchquest-sandbox:latest"
+    memory: str = "2g"
+    cpus: str = "2"
+    pids_limit: int = 256
+    network: bool = False  # off unless a human enables it; model-chosen commands never get a network by default
+    timeout_seconds: int | None = None  # default: safety.max_command_timeout
+    tmpfs_size: str = "512m"
+    read_only_rootfs: bool = True
+
+
+class RuntimeConfig(BaseModel):
+    default: str = "local"
+    docker: DockerConfig = Field(default_factory=DockerConfig)
+
+
 class AgentConfig(BaseModel):
     """Bounds on autonomous behaviour. Every loop in the engine reads its limit from here."""
 
@@ -161,6 +177,7 @@ class AppConfig(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
