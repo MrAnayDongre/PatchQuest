@@ -114,3 +114,25 @@ def test_providers_lists_configuration_state(env, capsys, monkeypatch):
     assert cli.main(["--config", cfg, "providers", "--json"]) == 0
     rows = {r["name"]: r for r in json.loads(capsys.readouterr().out)}
     assert rows["openai"]["configured"] is True and rows["mock"]["configured"] is True
+
+
+def test_agent_that_produces_nothing_for_a_mutating_task_is_not_a_success(env, capsys):
+    cfg, repo = env
+    empty = {"edits": [], "create": [], "delete": [], "rationale": "", "tests_to_run": []}
+    ScriptedProvider.register("cli-none", {"planner": [PLAN], "coder": [empty, empty]})
+    code = cli.main(["--config", cfg, "run", "--repo", str(repo), "--task", "Fix add() in calc.py",
+                     "--provider", "scripted", "--model", "cli-none", "--json"])
+    out = lines(capsys)
+    assert code == cli.EXIT_REJECTED and out[-1]["outcome"] == "no_patch"
+
+
+def test_database_never_defaults_into_the_working_directory(tmp_path, monkeypatch):
+    from patchquest.database import resolve_db_path
+
+    monkeypatch.delenv("PATCHQUEST_DB", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert resolve_db_path(None) == __import__("pathlib").Path.home() / ".patchquest" / "patchquest.db"
+    (tmp_path / "patchquest.db").write_text("")  # a pre-existing legacy file keeps working
+    assert resolve_db_path(None).name == "patchquest.db" and str(resolve_db_path(None)) == "patchquest.db"
+    monkeypatch.setenv("PATCHQUEST_DB", str(tmp_path / "x.db"))
+    assert resolve_db_path(None) == tmp_path / "x.db"

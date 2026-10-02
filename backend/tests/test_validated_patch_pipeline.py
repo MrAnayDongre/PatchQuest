@@ -327,3 +327,44 @@ class TestLifecycleSemantics:
         with get_db() as conn:
             assert conn.execute("SELECT 1 FROM reports WHERE run_id = ?", (rid,)).fetchone()
         assert (repo / "calc.py").read_text() == BUG
+
+
+class TestEmptyPatchRetry:
+    EMPTY = {"edits": [], "create": [], "delete": [], "rationale": "", "tests_to_run": []}
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_to_a_mutating_task_is_retried_once_and_can_recover(self, repo):
+        sm, rid = await run(repo, {"planner": [PLAN], "coder": [self.EMPTY, FIX]})
+        assert "patch_empty" in types(rid)
+        assert row(rid)["outcome"] == "applied" and (repo / "calc.py").read_text().endswith("a + b\n")
+        script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
+        assert "contained no edits" in script.calls_for("coder")[1]["messages"][1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_retry_is_bounded(self, repo):
+        sm, rid = await run(repo, {"planner": [PLAN], "coder": [self.EMPTY, self.EMPTY, FIX]})
+        script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
+        assert len(script.calls_for("coder")) == 2 and row(rid)["outcome"] == "no_patch"
+        assert "patch_missing" in types(rid)
+
+    @pytest.mark.asyncio
+    async def test_explicit_no_change_is_respected_without_a_retry(self, repo):
+        said = self.EMPTY | {"rationale": "No changes needed"}
+        sm, rid = await run(repo, {"planner": [PLAN], "coder": [said, FIX]})
+        script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
+        assert len(script.calls_for("coder")) == 1 and "patch_empty" not in types(rid)
+        assert row(rid)["outcome"] == "no_changes" and (repo / "calc.py").read_text() == BUG
+
+
+class TestPlannerCannotVeto:
+    @pytest.mark.asyncio
+    async def test_no_modifications_scope_does_not_stop_a_mutating_task(self, repo):
+        veto = PLAN | {"expected_patch_scope": "no modifications"}
+        sm, rid = await run(repo, {"planner": [veto], "coder": [FIX]})
+        assert row(rid)["outcome"] == "applied" and "plan_scope_overridden" in types(rid)
+
+    @pytest.mark.asyncio
+    async def test_planner_is_told_the_task_mode(self, repo):
+        sm, rid = await run(repo, {"planner": [PLAN], "coder": [FIX]})
+        script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
+        assert "Task mode (decided by the harness): MODIFY" in script.calls_for("planner")[0]["messages"][1]["content"]

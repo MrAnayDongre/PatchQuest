@@ -27,6 +27,7 @@ from patchquest.agents.provider_registry import get_provider
 from patchquest.agents.structured_outputs import (
     IntakeOutput,
     PatchOutput,
+    PatchSchema,
     PlannerOutput,
     ReviewerOutput,
     coerce,
@@ -45,6 +46,10 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (0.5, 1.5)
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+
+# (provider, base_url, model) pairs where constrained decoding was seen to misbehave (auto mode).
+_CONSTRAINED_UNRELIABLE: set[tuple[str, str, str]] = set()
 
 
 class BudgetExceeded(RuntimeError):
@@ -70,7 +75,7 @@ def _resolve_model(role_name: str, ctx: RunContext | None):
         return get_provider(run_provider), ModelConfig(
             provider=run_provider,
             model=run_model or (catalog["default_model"] if catalog else ""),
-            base_url=catalog.get("base_url") if catalog else None,
+            base_url=(ctx.base_url if ctx and ctx.base_url else None) or (catalog.get("base_url") if catalog else None),
             api_key_env=catalog.get("api_key_env") if catalog else None,
             max_tokens=4096 if nvidia else 2048,
             temperature=1.0 if nvidia else 0.2,
@@ -157,7 +162,8 @@ def _record(ctx: RunContext | None, role: str, provider: str, model: str, messag
 
 async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None,
                     schema: type[BaseModel] | None = None,
-                    extra_messages: list[dict[str, str]] | None = None) -> Completion:
+                    extra_messages: list[dict[str, str]] | None = None,
+                    constrain: bool = True, degraded_note: str | None = None) -> Completion:
     provider, model_config = _resolve_model(role_name, ctx)
 
     valid, err = provider.validate_config(model_config)
@@ -170,13 +176,15 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
         {"role": "user", "content": user_content},
         *(extra_messages or []),
     ]
-    response_format = _response_format(provider, model_config, schema)
+    response_format = _response_format(provider, model_config, schema) if constrain else None
     started_at, t0 = now_iso(), time.monotonic()
 
     last: BaseException | None = None
     for attempt in range(MAX_ATTEMPTS):
         try:
             response = await provider.complete(messages, model_config, response_format)
+            if degraded_note:
+                response.degraded.append(degraded_note)
             call_id = await asyncio.to_thread(
                 _record, ctx, role_name, model_config.provider, model_config.model, messages, started_at,
                 int((time.monotonic() - t0) * 1000), response, "ok")
@@ -209,16 +217,35 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
     raise RuntimeError(f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}") from last
 
 
+def _constrain_key(ctx: RunContext | None, role_name: str) -> tuple[str, str, str]:
+    _, mc = _resolve_model(role_name, ctx)
+    return (mc.provider, mc.base_url or "", mc.model)
+
+
 async def _call_role(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None = None,
-                     schema: type[BaseModel] | None = None) -> dict[str, Any]:
+                     schema: type[BaseModel] | None = None,
+                     request_schema: type[BaseModel] | None = None) -> dict[str, Any]:
     """Call a role and return its parsed JSON.
 
     With a ``schema`` the reply is validated; an invalid reply gets up to
     ``agent.format_repair_attempts`` follow-up calls that quote the validation error. A reply that
     still does not conform comes back as ``{"parse_error": True, ...}`` (callers already handle it).
+
+    Constrained decoding (``agent.structured_output``) is requested where the engine supports it.
+    A reply cut off by the token cap under constraint is salvaged when safe and, in ``auto`` mode,
+    makes later calls to that endpoint+model unconstrained, recorded as a degradation.
     """
-    completion = await _complete(role_name, system_prompt, user_content, ctx, schema)
-    parsed = _parse_json_response(completion.text)
+    mode = get_config().agent.structured_output
+    key = _constrain_key(ctx, role_name)
+    constrain = schema is not None and mode != "off" and not (mode == "auto" and key in _CONSTRAINED_UNRELIABLE)
+    note = "json_schema:learned_unreliable" if (schema is not None and mode == "auto" and key in _CONSTRAINED_UNRELIABLE) else None
+
+    completion = await _complete(role_name, system_prompt, user_content, ctx, request_schema or schema,
+                                 constrain=constrain, degraded_note=note)
+    if constrain and completion.response.finish_reason == "length" and mode == "auto":
+        _CONSTRAINED_UNRELIABLE.add(key)
+        logger.warning("constrained output hit the token cap for %s; going unconstrained for this endpoint", key)
+    parsed = _parse_json_response(completion.text, salvage=completion.response.finish_reason == "length")
     if schema is None:
         return parsed
 
@@ -231,8 +258,9 @@ async def _call_role(role_name: str, system_prompt: str, user_content: str, ctx:
             {"role": "user", "content": f"Your reply did not match the required JSON schema: {error}\n"
                                         "Reply again with ONLY a JSON object that matches the schema."},
         ]
-        completion = await _complete(role_name, system_prompt, user_content, ctx, schema, followup)
-        parsed = _parse_json_response(completion.text)
+        completion = await _complete(role_name, system_prompt, user_content, ctx, request_schema or schema, followup,
+                                     constrain=constrain and key not in _CONSTRAINED_UNRELIABLE)
+        parsed = _parse_json_response(completion.text, salvage=completion.response.finish_reason == "length")
         error = _validation_error(schema, parsed)
     if error:
         return {"raw_response": completion.text, "parse_error": True, "validation_error": error}
@@ -255,7 +283,44 @@ async def _call_role_text(role_name: str, system_prompt: str, user_content: str,
     return (await _complete(role_name, system_prompt, user_content, ctx)).text.strip()
 
 
-def _parse_json_response(content: str) -> dict[str, Any]:
+def salvage_truncated_json(text: str) -> dict[str, Any] | None:
+    """Close a JSON object that was cut off after a *completed* value (e.g. a whitespace loop).
+
+    Conservative on purpose: if the cut is inside a string there is no way to know what was meant,
+    so nothing is salvaged. Whatever is returned still goes through schema validation, and edits
+    are verified against the real file before they are applied.
+    """
+    body = text.strip()
+    start = body.find("{")
+    if start < 0:
+        return None
+    stack: list[str] = []
+    in_string = escaped = False
+    for ch in body[start:]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+    if in_string or not stack:
+        return None
+    candidate = body[start:].rstrip().rstrip(",")
+    try:
+        result = json.loads(candidate + "".join(reversed(stack)))
+    except json.JSONDecodeError:
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def _parse_json_response(content: str, salvage: bool = False) -> dict[str, Any]:
     try:
         return json.loads(content)
     except json.JSONDecodeError:
@@ -266,6 +331,8 @@ def _parse_json_response(content: str) -> dict[str, Any]:
                 return json.loads(content[start:end])
             except json.JSONDecodeError:
                 pass
+        if salvage and (recovered := salvage_truncated_json(content)) is not None:
+            return recovered
         return {"raw_response": content, "parse_error": True}
 
 
@@ -278,7 +345,11 @@ async def run_planner_role(ctx: RunContext) -> dict[str, Any]:
     from patchquest.memory.repo_map import get_repo_map
     repo_map = get_repo_map(ctx.repo_path)
     file_summary = "\n".join(f["file_path"] for f in repo_map["files"][:50])
-    user_content = f"Task: {ctx.task}\nRepo files:\n{file_summary}"
+    mode = ("READ-ONLY: do not modify files. Set expected_patch_scope to \"no modifications\"."
+            if ctx.read_only else
+            "MODIFY: this task requires changing files. Describe the expected scope, e.g. \"1 file, <20 lines\"; "
+            "never answer \"no modifications\".")
+    user_content = f"Task: {ctx.task}\nTask mode (decided by the harness): {mode}\nRepo files:\n{file_summary}"
     return await _call_role("planner", PLANNER_SYSTEM, user_content, ctx=ctx, schema=PlannerOutput)
 
 
@@ -323,7 +394,7 @@ async def run_analysis_role(ctx: RunContext) -> str:
     return await _call_role_text("analyst", ANALYSIS_SYSTEM, user_content, ctx=ctx)
 
 
-async def run_patch_role(ctx: RunContext) -> dict[str, Any]:
+async def run_patch_role(ctx: RunContext, hint: str = "") -> dict[str, Any]:
     from patchquest.orchestrator.run_context import _has_mutation_intent
 
     if "readme" in ctx.task.lower() and _has_mutation_intent(ctx.task.lower()):
@@ -335,8 +406,8 @@ async def run_patch_role(ctx: RunContext) -> dict[str, Any]:
     files = "\n".join(
         f'<file path="{path}">\n{str(content)[:8000]}\n</file>' for path, content in list(selected.items())[:8]
     ) or "(no files selected)"
-    user_content = f"Task: {ctx.task}\n\nRepository files:\n{files}"
-    return await _call_role("coder", PATCH_SYSTEM, user_content, ctx=ctx, schema=PatchOutput)
+    user_content = f"Task: {ctx.task}\n\nRepository files:\n{files}" + (f"\n\n{hint}" if hint else "")
+    return await _call_role("coder", PATCH_SYSTEM, user_content, ctx=ctx, schema=PatchOutput, request_schema=PatchSchema)
 
 
 async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], workspace_path: str, attempt: int) -> dict[str, Any]:
@@ -367,7 +438,7 @@ async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], works
         f"Failing commands:\n<output>\n{failure_text}\n</output>\n\n"
         f"Current repository files:\n{render_context(items)}"
     )
-    return await _call_role("coder", REPAIR_SYSTEM, user_content, ctx=ctx, schema=PatchOutput)
+    return await _call_role("coder", REPAIR_SYSTEM, user_content, ctx=ctx, schema=PatchOutput, request_schema=PatchSchema)
 
 
 def _build_readme_sentence_patch(repo_path: str, task: str) -> dict[str, Any] | None:

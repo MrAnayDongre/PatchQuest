@@ -50,3 +50,15 @@ def test_missing_tools_are_not_treated_as_test_failures():
     assert _tool_available("python3 -m unittest") is True
     assert _tool_available("definitely-not-installed --flag") is False
     assert _tool_available("unterminated 'quote") is False
+
+
+def test_plain_test_layouts_are_detected(tmp_path):
+    from patchquest.tools.test_runner import detect_test_commands
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_a():\n    pass\n")
+    cmds = detect_test_commands(str(tmp_path))
+    assert len(cmds) == 1 and ("pytest" in cmds[0] or "unittest discover" in cmds[0])
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    assert detect_test_commands(str(empty)) == []

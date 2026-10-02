@@ -75,8 +75,8 @@ async def _run(args: argparse.Namespace) -> int:
     svc = get_service()
     try:
         run = svc.create_run(repo_path=args.repo, task=args.task, provider=args.provider, model=args.model,
-                             runtime_mode=args.runtime, dry_run=args.dry_run)
-    except RepoPathError as exc:
+                             runtime_mode=args.runtime, dry_run=args.dry_run, base_url=args.base_url)
+    except (RepoPathError, ValueError) as exc:
         print(f"error: {exc}\nhint: pass --repo pointing at a project directory", file=sys.stderr)
         return EXIT_USAGE
     run_id = run["id"]
@@ -274,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--task", required=True, help="what to do")
     r.add_argument("--provider", default="mock")
     r.add_argument("--model")
+    r.add_argument("--base-url", help="OpenAI-compatible endpoint for this run, e.g. http://localhost:30000/v1")
     r.add_argument("--runtime", choices=["local", "docker"], default="local")
     r.add_argument("--dry-run", action="store_true", help="analyse only; never modify files")
     r.add_argument("--promote-policy", choices=["on_green", "on_no_regression", "always", "never"])

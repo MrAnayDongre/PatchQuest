@@ -39,6 +39,17 @@ _PHASES_AFTER_BLOCK = {Phase.SECURITY_SCAN, Phase.FINAL_REPORT}
 _PROMOTABLE_VERDICTS = {"passed", "no_tests"}
 
 
+_EMPTY_PATCH_HINT = (
+    "Your previous reply contained no edits, which means 'no change is needed'. This task does require "
+    "a change. Reply with at least one entry in \"edits\" (copy the \"search\" text exactly from the file "
+    "shown) or \"create\", or explain in \"rationale\" why no change is needed."
+)
+
+
+def _says_no_change(output: dict[str, Any]) -> bool:
+    return "no change" in str(output.get("rationale", "")).lower()
+
+
 def _tool_available(command: str) -> bool:
     """True when the command's executable resolves on the (scrubbed) PATH.
 
@@ -113,6 +124,7 @@ class RunStateMachine:
         model: str | None = None,
         runtime_mode: str = "local",
         dry_run: bool = False,
+        base_url: str | None = None,
     ) -> None:
         from patchquest.orchestrator.run_context import _detect_read_only
 
@@ -121,7 +133,7 @@ class RunStateMachine:
         self.ctx = RunContext(
             run_id=run_id, repo_path=repo_path, task=task,
             provider=provider, model=model, runtime_mode=runtime_mode,
-            dry_run=dry_run, read_only=read_only,
+            dry_run=dry_run, read_only=read_only, base_url=base_url,
         )
         self.phase_statuses: dict[Phase, PhaseStatus] = {p: PhaseStatus.PENDING for p in Phase}
         self._approval_events: dict[str, asyncio.Event] = {}
@@ -130,6 +142,7 @@ class RunStateMachine:
         self._blocked = False
         self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
+        self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
         self.ctx.event_sink = self._publish
 
@@ -389,8 +402,10 @@ class RunStateMachine:
 
         plan_data = (self.ctx.plan or {}).get("plan", {})
         if isinstance(plan_data, dict) and plan_data.get("expected_patch_scope", "") == "no modifications":
-            await self._skip_phase(Phase.PATCHING, "Skipped patching — plan indicates no modifications")
-            return
+            # The harness classified this task as mutating from the task text itself. A model (small
+            # ones misuse this field) does not get to veto that; the coder may still decline explicitly.
+            await self._emit("plan_scope_overridden", phase="patching",
+                             message="Plan said 'no modifications' but the task requires changes; asking the coder")
 
         if not isinstance(self.ctx.selected_context, dict):
             self.ctx.selected_context = {}
@@ -398,6 +413,17 @@ class RunStateMachine:
         from patchquest.agents.roles import run_patch_role
         output = await run_patch_role(self.ctx)
         applied, error = await self._apply_model_output(output)
+        if not applied and not error and not _says_no_change(output):
+            # A mutating task came back with no edits and no explanation. Ask once more, naming the
+            # problem, rather than silently ending the run as "no changes".
+            await self._emit("patch_empty", phase="patching",
+                             message="Model proposed no edits for a mutating task; asking once more")
+            output = await run_patch_role(self.ctx, hint=_EMPTY_PATCH_HINT)
+            applied, error = await self._apply_model_output(output)
+            if not applied and not error and not _says_no_change(output):
+                self._no_patch = True
+                await self._emit("patch_missing", phase="patching",
+                                 message="The agent produced no edits for a task that requires changes")
         if error:
             await self._emit("patch_rejected", phase="patching", message=f"Patch rejected: {error}")
             if self._patch_secret:
@@ -541,6 +567,9 @@ class RunStateMachine:
         if self._patch_secret:
             ctx.outcome = "rejected"
             await self._emit("patch_rejected", phase="final_report", message="Patch rejected: it introduces a secret")
+            return
+        if self._no_patch:
+            ctx.outcome = "no_patch"
             return
         if ws is None or not ctx.proposed_diff or not ws.summary():
             ctx.outcome = "no_changes"

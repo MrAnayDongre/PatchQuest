@@ -233,6 +233,14 @@ class TestEnsureList:
 # Patching phase hardening
 # ============================================================
 
+def _events(run_id: str) -> list[dict]:
+    from patchquest.database import get_db
+
+    with get_db() as conn:
+        rows = conn.execute("SELECT type FROM run_events WHERE run_id = ?", (run_id,)).fetchall()
+    return [{"type": r["type"]} for r in rows]
+
+
 def _insert_run(run_id: str) -> None:
     """Insert a stub run record so FK constraints pass for events."""
     now = now_iso()
@@ -254,10 +262,21 @@ class TestPatchingHardening:
         assert sm.phase_statuses[Phase.PATCHING] == PhaseStatus.SKIPPED
 
     @pytest.mark.asyncio
-    async def test_no_modifications_plan_skips_patching(self):
+    async def test_planner_cannot_veto_a_mutating_task(self):
+        """A small model's "no modifications" must not silently cancel a task the harness classified as
+        mutating (observed with Qwen3-0.6B). The coder is still asked and may decline explicitly."""
         _insert_run("r2")
         sm = RunStateMachine("r2", TEST_REPO, "Fix the bug")
         sm.ctx.read_only = False
+        sm.ctx.plan = {"plan": {"expected_patch_scope": "no modifications"}}
+        await sm._phase_patching()
+        assert sm.phase_statuses[Phase.PATCHING] != PhaseStatus.SKIPPED
+        assert any(e["type"] == "plan_scope_overridden" for e in _events("r2"))
+
+    @pytest.mark.asyncio
+    async def test_read_only_plan_still_skips_patching(self):
+        _insert_run("r2b")
+        sm = RunStateMachine("r2b", TEST_REPO, "Summarize the repo. Do not modify files.")
         sm.ctx.plan = {"plan": {"expected_patch_scope": "no modifications"}}
         await sm._phase_patching()
         assert sm.phase_statuses[Phase.PATCHING] == PhaseStatus.SKIPPED

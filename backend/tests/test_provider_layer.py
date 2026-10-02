@@ -10,7 +10,7 @@ from patchquest.agents import roles
 from patchquest.agents.provider_base import ModelConfig
 from patchquest.agents.provider_registry import get_provider
 from patchquest.agents.providers_scripted import ScriptedProvider
-from patchquest.agents.structured_outputs import PatchOutput, PlannerOutput, coerce, json_schema_for
+from patchquest.agents.structured_outputs import PatchOutput, PatchSchema, PlannerOutput, coerce, json_schema_for
 from patchquest.config import AppConfig, set_config
 from patchquest.database import get_db, init_db, set_db_path
 from patchquest.orchestrator.run_context import RunContext
@@ -26,6 +26,7 @@ def _env(tmp_path, monkeypatch):
     init_db()
     set_config(AppConfig())
     poc._UNSUPPORTED.clear()
+    roles._CONSTRAINED_UNRELIABLE.clear()
     monkeypatch.setattr(roles, "BACKOFF_SECONDS", (0, 0))
     yield
     poc._UNSUPPORTED.clear()
@@ -268,3 +269,70 @@ class TestProbe:
         r = await probe_endpoint("http://x/v1", client=httpx.AsyncClient(
             transport=httpx.MockTransport(lambda req: httpx.Response(503))))
         assert not r["ok"] and r["error"] == "HTTP 503"
+
+
+LOOPED = ('{\n  "edits": [\n    {\n      "path": "calc.py",\n      "search": "a - b",\n      "replace": "a + b"\n    '
+          + "\n \n" * 50)
+
+
+def completion(content, finish="stop"):
+    return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": finish}],
+                                     "usage": {"prompt_tokens": 5, "completion_tokens": 9}})
+
+
+def sg_ctx(name):
+    return RunContext(run_id=name, repo_path="/x", task="t", provider="sglang", model="qwen")
+
+
+class TestConstrainedDecodingIsAdaptive:
+    """Observed with Qwen3-0.6B on SGLang: correct edit, then endless whitespace until the token cap."""
+
+    @pytest.mark.asyncio
+    async def test_whitespace_loop_is_salvaged_and_later_calls_go_unconstrained(self, monkeypatch):
+        calls = fake_server(monkeypatch, lambda r, c: completion(LOOPED, "length"))
+        out = await roles._call_role("coder", "You are a code editor", "x", sg_ctx("adapt-1"), PatchOutput, PatchSchema)
+        assert out["edits"][0]["replace"] == "a + b" and not out.get("parse_error")  # answer recovered
+        assert "response_format" in calls[0]["body"] and len(roles._CONSTRAINED_UNRELIABLE) == 1
+
+        good = '{"edits": [{"path": "calc.py", "search": "a - b", "replace": "a + b"}]}'
+        calls2 = fake_server(monkeypatch, lambda r, c: completion(good))
+        out2 = await roles._call_role("coder", "You are a code editor", "x", sg_ctx("adapt-2"), PatchOutput, PatchSchema)
+        assert "response_format" not in calls2[0]["body"] and out2["edits"]
+        with get_db() as conn:
+            row = conn.execute("SELECT degraded FROM model_calls WHERE run_id = 'adapt-2'").fetchone()
+        assert "json_schema:learned_unreliable" in row["degraded"]
+
+    @pytest.mark.asyncio
+    async def test_schema_mode_never_falls_back(self, monkeypatch):
+        cfg_ = AppConfig()
+        cfg_.agent.structured_output = "schema"
+        set_config(cfg_)
+        calls = fake_server(monkeypatch, lambda r, c: completion(LOOPED, "length"))
+        await roles._call_role("coder", "You are a code editor", "x", sg_ctx("strict"), PatchOutput, PatchSchema)
+        await roles._call_role("coder", "You are a code editor", "x", sg_ctx("strict"), PatchOutput, PatchSchema)
+        assert all("response_format" in c["body"] for c in calls) and not roles._CONSTRAINED_UNRELIABLE
+
+    @pytest.mark.asyncio
+    async def test_off_mode_never_constrains(self, monkeypatch):
+        cfg_ = AppConfig()
+        cfg_.agent.structured_output = "off"
+        set_config(cfg_)
+        calls = fake_server(monkeypatch, lambda r, c: completion('{"edits": []}'))
+        await roles._call_role("coder", "You are a code editor", "x", sg_ctx("off"), PatchOutput, PatchSchema)
+        assert "response_format" not in calls[0]["body"]
+
+    def test_request_schema_has_no_legacy_diff_field(self):
+        assert "diff" not in json_schema_for(PatchSchema)["properties"]
+        assert "diff" in json_schema_for(PatchOutput)["properties"]  # still accepted when validating
+
+
+class TestSalvage:
+    def test_recovers_after_a_completed_value(self):
+        assert roles.salvage_truncated_json(LOOPED)["edits"][0]["path"] == "calc.py"
+
+    def test_refuses_to_guess_inside_a_string(self):
+        assert roles.salvage_truncated_json('{"edits": [{"path": "a", "search": "unterminated') is None
+
+    def test_only_used_when_the_reply_was_truncated(self):
+        assert roles._parse_json_response(LOOPED)["parse_error"] is True
+        assert roles._parse_json_response(LOOPED, salvage=True)["edits"]

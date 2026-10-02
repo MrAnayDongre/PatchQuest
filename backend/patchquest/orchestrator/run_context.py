@@ -124,6 +124,7 @@ class RunContext:
     provider: str = "mock"
     model: str | None = None
     runtime_mode: str = "local"
+    base_url: str | None = None
     dry_run: bool = False
     read_only: bool = False
     analysis: str | None = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -15,10 +16,22 @@ from patchquest.config import get_config
 _DB_PATH: Path | None = None
 
 
+def resolve_db_path(configured: str | None) -> Path:
+    env = os.environ.get("PATCHQUEST_DB")
+    if env:
+        return Path(env).expanduser()
+    if configured:
+        return Path(configured).expanduser()
+    legacy = Path("patchquest.db")
+    if legacy.exists():  # keep working for installs that predate the per-user location
+        return legacy
+    return Path.home() / ".patchquest" / "patchquest.db"
+
+
 def get_db_path() -> Path:
     global _DB_PATH
     if _DB_PATH is None:
-        _DB_PATH = Path(get_config().db_path)
+        _DB_PATH = resolve_db_path(get_config().db_path)
     return _DB_PATH
 
 
@@ -62,6 +75,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("runtime_mode", "TEXT DEFAULT 'local'"),
         ("outcome", "TEXT"),
         ("verdict", "TEXT"),
+        ("base_url", "TEXT"),
     ]
     for col_name, col_def in migrations:
         if col_name not in existing:
@@ -95,7 +109,8 @@ CREATE TABLE IF NOT EXISTS runs (
     updated_at TEXT NOT NULL,
     completed_at TEXT,
     outcome TEXT,
-    verdict TEXT
+    verdict TEXT,
+    base_url TEXT
 );
 
 CREATE TABLE IF NOT EXISTS model_calls (

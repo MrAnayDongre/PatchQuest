@@ -51,6 +51,9 @@ Output valid JSON with these keys:
 - "rationale": one or two sentences
 - "tests_to_run": list of test commands (optional)
 Rules: minimal change, no unrelated refactors, no hardcoded secrets, only touch files shown or create new ones.
+If the task needs a change you MUST provide it in "edits" (or "create"); an empty answer means "no change is needed".
+Example. File shown: <file path="calc.py">def add(a, b):\n    return a - b\n</file>  Task: make add() return the sum. Correct answer:
+{"edits": [{"path": "calc.py", "search": "    return a - b", "replace": "    return a + b"}], "create": [], "delete": [], "rationale": "add() subtracted instead of adding", "tests_to_run": []}
 If no change is needed return {"edits": [], "create": [], "delete": [], "rationale": "No changes needed", "tests_to_run": []}.""" + _UNTRUSTED + _JSON_STRICT
 
 REPAIR_SYSTEM = """You are repairing a change that made validation fail. You are given the task, the current diff, the failing command output and the current contents of the relevant files.

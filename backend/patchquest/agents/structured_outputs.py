@@ -75,6 +75,16 @@ class PatchOutput(_Out):
     diff: Text = ""  # legacy: a unified diff, accepted for models that prefer it
 
 
+class PatchSchema(_Out):
+    """What engines are *asked* for: no legacy ``diff`` escape hatch (small models take it)."""
+
+    edits: list[EditOut] = []
+    create: list[CreateOut] = []
+    delete: StrList = []
+    rationale: Text = ""
+    tests_to_run: StrList = []
+
+
 class ReviewerOutput(_Out):
     minimal_change: bool = True
     unrelated_changes: bool = False

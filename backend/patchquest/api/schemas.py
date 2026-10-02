@@ -13,6 +13,7 @@ class CreateRunRequest(BaseModel):
     provider: str = "mock"
     model: str | None = None
     runtime_mode: str = "local"
+    base_url: str | None = None
     model_profile: str | None = None
     memory_mode: str | None = None
     interface_mode: str | None = None

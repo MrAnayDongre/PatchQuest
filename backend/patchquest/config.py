@@ -147,6 +147,10 @@ class AgentConfig(BaseModel):
     # Bounds on model usage per run (principle: every autonomous loop has limits).
     max_model_calls: int = 40
     max_total_tokens: int = 0  # 0 = unlimited
+    # auto: ask for constrained (JSON-schema) output where the engine supports it, and stop asking for an
+    #       endpoint+model once it misbehaves (e.g. loops on whitespace until the token cap).
+    # off: never constrain. schema: always constrain, never fall back.
+    structured_output: str = "auto"
     # One extra call, with the validation error, when a reply does not match the role's schema.
     format_repair_attempts: int = 1
     # Persist prompts and responses (needed for replay). Disable if prompts must not be stored.
@@ -161,7 +165,9 @@ class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     repo_intelligence: RepoIntelligenceConfig = Field(default_factory=RepoIntelligenceConfig)
-    db_path: str = "patchquest.db"
+    # SQLite file. Unset: $PATCHQUEST_DB, else ./patchquest.db if it already exists (legacy), else
+    # ~/.patchquest/patchquest.db. It is never created inside the repository you point a run at.
+    db_path: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     # Name of the environment variable holding the API bearer token. Required when host is not loopback.

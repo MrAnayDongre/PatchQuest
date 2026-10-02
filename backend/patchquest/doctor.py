@@ -70,7 +70,7 @@ def check_config() -> list[Check]:
         cfg = get_config()
     except Exception as exc:
         return [Check("config", FAIL, f"invalid configuration: {exc}", "Fix config.yaml or unset PATCHQUEST_CONFIG")]
-    out.append(Check("config", OK, f"host={cfg.host} port={cfg.port} db={cfg.db_path}"))
+    out.append(Check("config", OK, f"host={cfg.host} port={cfg.port}"))
     if not is_loopback(cfg.host) and not configured_token():
         out.append(Check("api-auth", FAIL, f"host {cfg.host} is not loopback and no API token is set",
                          f"Set {cfg.api_token_env} to a long random value or use host 127.0.0.1"))

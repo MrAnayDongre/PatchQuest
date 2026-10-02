@@ -102,3 +102,17 @@ def validate_repo_path(raw: str) -> str:
     if roots and not any(_is_within(resolved, Path(os.path.expanduser(r)).resolve()) for r in roots):
         raise RepoPathError(f"repo_path is outside the allowed roots: {roots}")
     return str(resolved)
+
+
+def validate_base_url(raw: str | None) -> str | None:
+    """A run may point at any http(s) model endpoint; nothing else (no file:, no credentials in the URL)."""
+    if not raw:
+        return None
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(f"base_url must be an http(s) URL: {raw}")
+    if parts.username or parts.password:
+        raise ValueError("base_url must not contain credentials; use api_key_env instead")
+    return raw.rstrip("/")

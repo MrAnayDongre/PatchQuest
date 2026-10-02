@@ -35,8 +35,9 @@ async def create_run(req: CreateRunRequest) -> RunResponse:
             repo_path=req.repo_path, task=req.task, provider=req.provider or "mock", model=req.model,
             runtime_mode=req.runtime_mode or "local", model_profile=req.model_profile,
             memory_mode=req.memory_mode or "repo", allow_network=req.allow_network, dry_run=req.dry_run,
+            base_url=req.base_url,
         )
-    except RepoPathError as exc:
+    except (RepoPathError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     service.launch(run["id"])
     return _to_response(run)

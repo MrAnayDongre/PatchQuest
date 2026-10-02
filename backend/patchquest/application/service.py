@@ -16,7 +16,7 @@ from typing import Any
 from patchquest.database import get_db, insert_event, now_iso
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
-from patchquest.security import validate_repo_path
+from patchquest.security import validate_base_url, validate_repo_path
 
 TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_interrupted"})
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
@@ -52,18 +52,20 @@ class TaskService:
         memory_mode: str = "repo",
         allow_network: bool = False,
         dry_run: bool = False,
+        base_url: str | None = None,
     ) -> dict[str, Any]:
         """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path."""
         repo_path = validate_repo_path(repo_path)
+        base_url = validate_base_url(base_url)
         run_id = str(uuid.uuid4())
         now = now_iso()
         with get_db() as conn:
             conn.execute(
                 """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile,
-                   memory_mode, runtime_mode, allow_network, dry_run, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   memory_mode, runtime_mode, allow_network, dry_run, base_url, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, repo_path, task, "created", provider, model, model_profile, memory_mode,
-                 runtime_mode, int(allow_network), int(dry_run), now, now),
+                 runtime_mode, int(allow_network), int(dry_run), base_url, now, now),
             )
             insert_event(conn, run_id, "run_created", message=f"Run created: {task[:100]}")
         return self.get_run(run_id)
@@ -71,7 +73,7 @@ class TaskService:
     def _machine_for(self, run: dict[str, Any]) -> RunStateMachine:
         return RunStateMachine(
             run["id"], run["repo_path"], run["task"], provider=run["provider"] or "mock", model=run["model"],
-            runtime_mode=run["runtime_mode"] or "local", dry_run=bool(run["dry_run"]),
+            runtime_mode=run["runtime_mode"] or "local", dry_run=bool(run["dry_run"]), base_url=run.get("base_url"),
         )
 
     # --------------------------------------------------------------------- run

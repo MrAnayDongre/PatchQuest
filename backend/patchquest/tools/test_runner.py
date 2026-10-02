@@ -7,6 +7,19 @@ import shutil
 from pathlib import Path
 
 
+def _has_module(name: str) -> bool:
+    """Whether the interpreter that will actually run the tests (the one on PATH) can import ``name``."""
+    import subprocess
+
+    interpreter = shutil.which(_python())
+    if not interpreter:
+        return False
+    try:
+        return subprocess.run([interpreter, "-c", f"import {name}"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _python() -> str:
     """`python` is absent on many modern systems that only ship `python3`."""
     return "python" if shutil.which("python") else "python3"
@@ -21,6 +34,16 @@ def detect_test_commands(repo_path: str) -> list[str]:
 
     if (root / "tox.ini").exists():
         commands.append("tox")
+
+    # Plain layouts without pyproject/pytest.ini: tests/ or test_*.py at the top level.
+    has_py_tests = (root / "tests").is_dir() and any((root / "tests").rglob("test_*.py"))
+    has_py_tests = has_py_tests or any(root.glob("test_*.py"))
+    if has_py_tests and not commands:
+        if _has_module("pytest"):
+            commands.append(f"{_python()} -m pytest --tb=short -q")
+        else:
+            start = "tests" if (root / "tests").is_dir() else "."
+            commands.append(f"{_python()} -m unittest discover -s {start} -q")
 
     pkg_json = root / "package.json"
     if pkg_json.exists():
