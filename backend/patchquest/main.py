@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from patchquest.api.auth import authenticate_request, local_scope, require
@@ -85,6 +87,22 @@ for _router, _read, _write in (
     (calendar_router, Permission.RUN_READ, Permission.RUN_CREATE),
 ):
     app.include_router(_router, dependencies=[Depends(local_scope(_read, _write))])
+
+
+@app.get("/live", include_in_schema=False)
+async def live() -> dict[str, str]:
+    """The process is up. Says nothing about whether it can do useful work (see /ready)."""
+    return {"status": "live"}
+
+
+@app.get("/ready")
+async def ready() -> JSONResponse:
+    """Can this instance do its job? Checks what it actually depends on; 503 with the failing checks otherwise."""
+    from patchquest.runtime.health import readiness
+
+    checks = await asyncio.to_thread(readiness)
+    ok = all(c["ok"] for c in checks.values())
+    return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503)
 
 
 @app.get("/api/health", response_model=HealthResponse)

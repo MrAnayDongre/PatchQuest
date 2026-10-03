@@ -25,6 +25,7 @@ from patchquest.api.schemas import (
 )
 from patchquest.application import get_service
 from patchquest.application.service import ForkBlocked, ForkError, RunNotActive
+from patchquest.config import get_config
 from patchquest.domain.approvals import ApprovalError, Decision
 from patchquest.domain.identity import Permission
 from patchquest.persistence import checkpoints
@@ -79,7 +80,11 @@ async def create_run(req: CreateRunRequest, request: Request, principal: Current
     except (RepoPathError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     record(request, principal, "run.create", workspace_id, run["id"], detail={"provider": run["provider"], "model": run["model"]})
-    service.launch(run["id"])
+    if get_config().queue_mode:
+        service.enqueue(run["id"], actor=principal.actor)  # a worker will claim it
+        run = service.get_run(run["id"])
+    else:
+        service.launch(run["id"])
     return _to_response(run)
 
 
@@ -178,7 +183,8 @@ async def resume_plan(access: CanRead) -> dict[str, Any]:
 @router.post("/{run_id}/resume")
 async def resume_run(body: ResumeRequest, request: Request, access: CanControl) -> dict[str, Any]:
     try:
-        plan = get_service().resume(access.run["id"], accept_drift=body.accept_drift, rollback=body.rollback)
+        plan = get_service().resume(access.run["id"], accept_drift=body.accept_drift, rollback=body.rollback,
+                                    defer=get_config().queue_mode)
     except NotResumable as exc:  # includes ConfirmationRequired
         raise HTTPException(409, _plan_detail(exc)) from None
     record(request, access.principal, "run.resume", access.workspace_id, access.run["id"],
@@ -193,7 +199,8 @@ async def fork_run(body: ForkRequest, request: Request, access: CanControl) -> R
         raise HTTPException(403, {"code": "forbidden", "message": "run.create is not permitted in this workspace"})
     try:
         child = get_service().fork(access.run["id"], from_seq=body.from_checkpoint, provider=body.provider, model=body.model,
-                                   base_url=body.base_url, overrides=body.overrides, accept_drift=body.accept_drift)
+                                   base_url=body.base_url, overrides=body.overrides, accept_drift=body.accept_drift,
+                                   defer=get_config().queue_mode)
     except ForkBlocked as exc:
         raise HTTPException(409, {"code": "confirmation_required", "message": str(exc), "drift": exc.drift.kind.value}) from None
     except (ForkError, ValueError) as exc:

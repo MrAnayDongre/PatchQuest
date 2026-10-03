@@ -24,7 +24,7 @@ from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
 from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
-from patchquest.runtime import lineage
+from patchquest.runtime import lineage, queue
 from patchquest.runtime.fingerprint import Drift, DriftReport
 from patchquest.runtime.replay import (
     REPLAY_OVERRIDES,
@@ -147,12 +147,13 @@ class TaskService:
                                "ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
         return (json.loads(row["payload_json"]).get("budget") or []) if row and row["payload_json"] else []
 
-    def resume(self, run_id: str, *, accept_drift: bool = False, rollback: bool = False) -> ResumePlan:
+    def resume(self, run_id: str, *, accept_drift: bool = False, rollback: bool = False, defer: bool = False) -> ResumePlan:
         """Continue an interrupted run after the safety checks in ``plan_resume``.
 
         Raises ``NotResumable`` when it cannot, ``ConfirmationRequired`` when it can but a human must first
         accept ``accept_drift`` (changes made while the run was down) or ``rollback`` (undo a half-written
-        promotion). Returns the plan that was acted on.
+        promotion). Returns the plan that was acted on. With ``defer`` the run is queued for a worker instead of
+        being continued in this process.
         """
         from patchquest.persistence import checkpoints
 
@@ -177,11 +178,15 @@ class TaskService:
             cp, _ = checkpoints.latest_valid(conn, run_id)
             insert_event(conn, run_id, "run_resume_requested", message=plan.recovery_action,
                          payload=plan.explain(), actor="user", attempt=machine.attempt)
+            how = f"resumed from checkpoint {cp.seq}" if cp else "restarted from the beginning"
+            if defer:
+                conn.execute("UPDATE runs SET resume_note = ? WHERE id = ?", ("applied" if reconciled else None, run_id))
+                queue.enqueue(conn, run_id, actor="resume", reason=f"{how}; queued for a worker")
+                return plan
             # Leave "interrupted" before returning: anything following the run (CLI, SSE) treats that
             # status as the end of the stream.
             transition(conn, run_id, RunStatus.RUNNING, actor="resume", attempt=machine.attempt,
-                       correlation_id=machine.correlation_id,
-                       reason=f"resumed from checkpoint {cp.seq}" if cp else "restarted from the beginning")
+                       correlation_id=machine.correlation_id, reason=how)
 
         def configure(m: RunStateMachine) -> None:
             if reconciled:  # applied after restore: a checkpoint carries the flag's older value
@@ -189,6 +194,29 @@ class TaskService:
 
         self._spawn(run_id, machine, checkpoint=cp, resumed=True, configure=configure)
         return plan
+
+    def enqueue(self, run_id: str, actor: str = "runtime") -> None:
+        """Hand a created run to the worker pool instead of running it in this process."""
+        with get_db() as conn:
+            queue.enqueue(conn, run_id, actor=actor)
+
+    def start_claimed(self, run_id: str) -> asyncio.Task[None]:
+        """Run a run a worker has just claimed (it is already ``running``). Continues from the run's newest valid
+        checkpoint if it has one (a fork, or a resume), else starts from the beginning."""
+        from patchquest.persistence import checkpoints
+
+        run = self.get_run(run_id)
+        machine = self._machine_for(run)
+        machine.attempt = int(run.get("attempt") or 1)
+        with get_db() as conn:
+            cp, _ = checkpoints.latest_valid(conn, run_id)
+
+        def configure(m: RunStateMachine) -> None:
+            if run.get("resume_note") == "applied":
+                m._promotion_reconciled = "applied"
+
+        self._spawn(run_id, machine, checkpoint=cp, resumed=True, configure=configure)
+        return self._tasks[run_id]
 
     def _spawn(self, run_id: str, machine: RunStateMachine, *, checkpoint: checkpoints.Checkpoint | None = None,
                resumed: bool = False, configure: Callable[[RunStateMachine], None] | None = None,
@@ -219,7 +247,7 @@ class TaskService:
     # ------------------------------------------------------------- fork / replay
     def fork(self, run_id: str, *, from_seq: int | None = None, provider: str | None = None, model: str | None = None,
              base_url: str | None = None, overrides: dict[str, Any] | None = None,
-             accept_drift: bool = False) -> dict[str, Any]:
+             accept_drift: bool = False, defer: bool = False) -> dict[str, Any]:
         """Start a new run from one of ``run_id``'s checkpoints, optionally with another model or settings.
 
         The parent is never modified. Raises ``ForkError`` when there is no usable checkpoint, and
@@ -241,6 +269,9 @@ class TaskService:
         with get_db() as conn:
             child_id = lineage.create_child(conn, run_id, kind="fork", parent_cp=cp, provider=provider, model=model,
                                             base_url=base_url, overrides=overrides)
+        if defer:  # a worker restores the child's copy of the fork-point checkpoint when it claims the run
+            self.enqueue(child_id)
+            return self.get_run(child_id)
         child = self.get_run(child_id)
         self._spawn(child_id, self._machine_for(child), checkpoint=cp)
         return child

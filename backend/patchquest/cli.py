@@ -647,6 +647,48 @@ async def _follow_workflow(engine: Any, run_id: str, json_mode: bool) -> int:
         await asyncio.sleep(0.4)
 
 
+async def _worker(args: argparse.Namespace) -> int:
+    import signal
+
+    from patchquest.application import get_service
+    from patchquest.config import get_config
+    from patchquest.runtime.worker import Worker
+
+    worker = Worker(get_service(), worker_id=args.id, lease_s=args.lease or get_config().worker_lease_seconds, poll_s=args.poll)
+    if args.once:
+        await worker.run_once()
+        return EXIT_OK
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    print(f"worker {worker.id}: lease {worker.lease_s:g}s, polling every {worker.poll_s:g}s (Ctrl-C to stop)", file=sys.stderr)
+    runner = asyncio.create_task(worker.run_forever(stop))
+    await stop.wait()
+    try:  # finish the run in hand if it ends soon, else leave it for another worker to recover
+        handled = await asyncio.wait_for(asyncio.shield(runner), timeout=args.grace)
+    except TimeoutError:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
+        print("stopped with a run in progress; another worker will recover it when its lease expires", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    print(f"worker {worker.id} stopped after {handled} run(s)", file=sys.stderr)
+    return EXIT_OK
+
+
+def _cmd_queue(args: argparse.Namespace) -> int:
+    from patchquest.runtime import queue
+
+    stats = queue.stats()
+    if args.json:
+        _emit_json(stats)
+    else:
+        wait = "-" if stats["oldest_wait_s"] is None else f"{stats['oldest_wait_s']:.0f}s"
+        print(f"queued {stats['queued']}   running with a live lease {stats['leased']}   expired leases {stats['expired_leases']}   "
+              f"oldest waiting {wait}")
+    return EXIT_OK
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -905,6 +947,14 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--json", action="store_true")
     cn = wsub.add_parser("cancel", help="cancel a run")
     cn.add_argument("run_id")
+    wk = sub.add_parser("worker", help="execute queued runs (with queue_mode on); recovers runs whose worker died")
+    wk.add_argument("--id", help="worker name (default: host-pid-random)")
+    wk.add_argument("--lease", type=float, help="seconds a claimed run stays ours without a heartbeat (default: config)")
+    wk.add_argument("--poll", type=float, default=1.0, help="seconds between looking for work")
+    wk.add_argument("--grace", type=float, default=30.0, help="on shutdown, seconds to let the current run finish")
+    wk.add_argument("--once", action="store_true", help="handle at most one run and exit")
+    qs = sub.add_parser("queue", help="how many runs are waiting, leased or have lost their worker")
+    qs.add_argument("--json", action="store_true")
     en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
@@ -942,11 +992,13 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_resume(args))
     if args.cmd == "workflows":
         return asyncio.run(_workflows(args))
+    if args.cmd == "worker":
+        return asyncio.run(_worker(args))
     if args.cmd == "fork":
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

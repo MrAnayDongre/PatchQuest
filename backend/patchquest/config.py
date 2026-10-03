@@ -216,6 +216,10 @@ class AppConfig(BaseModel):
     # Optional price list for cost metrics: model name -> {"input_per_mtok": usd, "output_per_mtok": usd}.
     # Without an entry a model reports tokens and compute time, never an invented dollar figure.
     pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
+    # True: the API only records and queues runs; ``patchquest worker`` processes execute them (and recover a
+    # dead worker's runs). False: runs execute inside the API process (single-user local mode).
+    queue_mode: bool = False
+    worker_lease_seconds: float = 30.0
     host: str = "127.0.0.1"
     port: int = 8000
     # Name of the environment variable holding the API bearer token. Required when host is not loopback.

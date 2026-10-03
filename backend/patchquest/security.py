@@ -21,7 +21,7 @@ from patchquest.config import get_config
 from patchquest.paths import FORBIDDEN_PREFIXES, _is_within
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "testserver"}
-EXEMPT_PATHS = {"/api/health"}
+EXEMPT_PATHS = {"/api/health", "/live", "/ready"}
 SYSTEM_DIRS = tuple(Path(p) for p in (
     "/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc", "/sys",
 ))

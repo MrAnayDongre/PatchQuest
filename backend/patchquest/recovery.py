@@ -30,6 +30,8 @@ def recover_interrupted_runs() -> int:
             # Databases from before typed statuses never recorded 'running': a created run with a
             # phase was in flight.
             "OR (status = 'created' AND current_phase IS NOT NULL)", [s.value for s in _ACTIVE]).fetchall()
+        # A run that carries a lease belongs to the worker pool: workers recover it when the lease expires.
+        rows = [r for r in rows if not conn.execute("SELECT lease_owner FROM runs WHERE id = ?", (r["id"],)).fetchone()[0]]
         for row in rows:
             run_id, status = row["id"], RunStatus(row["status"])
             try:
