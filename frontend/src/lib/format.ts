@@ -106,3 +106,14 @@ export function humanize(token: string): string {
 export function plural(n: number, one: string, many: string = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
+
+/** A model name for people: a replay's internal session name ("replay:<run>:<run>") reads as what it is. */
+export function modelLabel(model: string | null | undefined): string {
+  return model?.startsWith('replay:') ? 'recorded answers' : (model ?? '')
+}
+
+/** "local:local" and "user:ana" as a person would say it. */
+export function actorLabel(actor: string): string {
+  const [kind, name] = actor.split(':')
+  return name && name !== kind ? name : kind === 'local' ? 'this machine' : actor
+}

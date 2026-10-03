@@ -28,7 +28,7 @@ await page.getByRole('textbox', { name: /^Description/ }).fill('Built by hand in
 await page.getByLabel('Trigger', { exact: true }).selectOption({ label: 'GitHub issue labelled' })
 await page.getByRole('button', { name: 'Add a match' }).click()
 await page.getByRole('textbox', { name: /^Event field 1/ }).fill('payload.label')
-await page.getByRole('textbox', { name: /^Value 1/ }).fill('agent-ready')
+await page.getByRole('textbox', { name: /^Value 1/ }).fill('ui-built')
 for (const [i, [n, d]] of [['model', 'demo-issue'], ['provider', 'scripted'], ['repo', '/tmp/pq-demo/repos/payments-service']].entries()) {
   if (i > 0 || (await page.getByRole('textbox', { name: /^Variable name 1/ }).count()) === 0) await page.getByRole('button', { name: /add a variable/i }).click()
   await page.getByRole('textbox', { name: new RegExp(`^Variable name ${i + 1}`) }).fill(n)

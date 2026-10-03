@@ -21,6 +21,9 @@ export interface Me {
 }
 export const getMe = (signal?: AbortSignal): Promise<Me> => request('/me', { signal })
 
+// ---- demo environment (404 anywhere else)
+export const getDemoInfo = (signal?: AbortSignal): Promise<{ demo: boolean }> => request('/demo', { signal })
+
 // ---- integrations
 export type ConfigType = 'string' | 'string_list' | 'string_map'
 export interface KindAction {

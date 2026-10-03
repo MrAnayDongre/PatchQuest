@@ -71,6 +71,12 @@ describe('explanations in plain language', () => {
     expect(w.details[0]).toMatch(/left out because they looked out of date/)
     expect(w.details[1]).toBe('a (you set this): matches x')
   })
+  it('reads remembered-fact keys as words', () => {
+    const w = explain({ id: 3, type: 'memory_selected', phase: null, message: '', created_at: '', payload: { considered: 2, selected: 2, tokens: 9, items: [
+      { key: 'profile.test_commands', source: 'repository_detected', trusted: true }, { key: 'run:32bd9b18-07b', source: 'run_outcome', trusted: false }] } })
+    expect(w.details[0]).toMatch(/^test commands \(/)
+    expect(w.details[1]).toMatch(/^note from an earlier run \(/)
+  })
 })
 
 describe('navigation', () => {

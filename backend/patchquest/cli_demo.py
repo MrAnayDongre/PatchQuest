@@ -12,6 +12,7 @@ from typing import Any
 
 def register(sub: Any) -> None:
     d = sub.add_parser("demo", help="start a seeded, isolated demo (never touches your real data); `demo reset` rebuilds it")
+    d.add_argument("--label", default="agent-ready", help="trigger: the label the simulated issue gets (default: agent-ready)")
     d.add_argument("action", nargs="?", choices=["start", "reset", "trigger", "transcript", "path", "crash"], default="start")
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--host", default="127.0.0.1")
@@ -50,7 +51,8 @@ def run(args: argparse.Namespace) -> int:
         import httpx
 
         try:
-            reply = httpx.request("POST" if args.action == "trigger" else "GET", f"{base}/api/demo/{'trigger-issue' if args.action == 'trigger' else 'transcript'}", timeout=30)
+            reply = httpx.request("POST" if args.action == "trigger" else "GET", f"{base}/api/demo/{'trigger-issue' if args.action == 'trigger' else 'transcript'}",
+                                  params={"label": args.label} if args.action == "trigger" else None, timeout=30)
         except httpx.HTTPError as exc:
             print(f"error: no demo is listening at {base} ({type(exc).__name__}); start one with `patchquest demo`", file=sys.stderr)
             return 1
@@ -65,6 +67,9 @@ def run(args: argparse.Namespace) -> int:
     os.environ.update({"PATCHQUEST_DEMO": "1", "PATCHQUEST_DEMO_DIR": str(directory), "PATCHQUEST_DB": str(directory / "patchquest.db"),
                        "PATCHQUEST_HOST": args.host, "PATCHQUEST_PORT": str(args.port)})
     os.environ.pop("PATCHQUEST_API_TOKEN", None)
+    from patchquest.runtime import workspace
+
+    workspace.WORKSPACE_BASE = directory / "sandboxes"  # shadow workspaces (and the paths in test output) stay with the demo's data
     static = _static_dir()
     if static:
         os.environ["PATCHQUEST_STATIC_DIR"] = static

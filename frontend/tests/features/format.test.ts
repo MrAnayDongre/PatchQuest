@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { baseName, elapsed, formatBytes, formatCount, formatDuration, humanize, median, plural, relativeTime, truncate } from '../../src/lib/format'
+import { actorLabel, baseName, elapsed, formatBytes, formatCount, formatDuration, humanize, median, modelLabel, plural, relativeTime, truncate } from '../../src/lib/format'
 
 const NOW = Date.parse('2026-03-10T12:00:00Z')
+
+describe('names for people', () => {
+  it('hides internal session and actor spellings', () => {
+    expect(modelLabel('replay:dc0442e7:5b4f459a')).toBe('recorded answers')
+    expect(modelLabel('demo-issue')).toBe('demo-issue')
+    expect(modelLabel(null)).toBe('')
+    expect(actorLabel('local:local')).toBe('this machine')
+    expect(actorLabel('user:ana')).toBe('ana')
+  })
+})
 
 describe('formatting', () => {
   it('relative time reads naturally', () => {

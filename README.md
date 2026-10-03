@@ -106,7 +106,7 @@ limitations before relying on any of it.
 ## Configuration
 
 `config.yaml` (see `sample.config.yaml`) and environment variables: `PATCHQUEST_DB`, `PATCHQUEST_DATABASE_URL` (+ `_SCHEMA`), `_HOST`, `_PORT`,
-`_QUEUE_MODE`, `_WORKER_LEASE_SECONDS`, `_STATIC_DIR`, `PATCHQUEST_API_TOKEN`, `PATCHQUEST_SECRET_KEY`. Provider keys are read from the environment
+`_QUEUE_MODE`, `_WORKER_LEASE_SECONDS`, `_STATIC_DIR`, `_SANDBOX_DIR`, `PATCHQUEST_API_TOKEN`, `PATCHQUEST_SECRET_KEY`. Provider keys are read from the environment
 variable named in the config, never stored. `patchquest config explain` shows where every effective setting came from; per-run overrides are limited to
 `agent.*` and are clamped by policy ceilings.
 

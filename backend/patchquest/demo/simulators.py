@@ -37,10 +37,10 @@ class Simulators:
     def open_issue(self, title: str, body: str) -> int:
         return self.github.add_issue(title, body)
 
-    def labeled_event(self, number: int, title: str, body: str, delivery_id: str) -> Delivery:
-        """What GitHub would send when someone labels the issue ``agent-ready``."""
-        payload = {"action": "labeled", "repository": {"full_name": REPO}, "sender": {"login": "ana-demo"}, "label": {"name": "agent-ready"},
-                   "issue": {"number": number, "title": title, "body": body, "labels": [{"name": "agent-ready"}]}}
+    def labeled_event(self, number: int, title: str, body: str, delivery_id: str, label: str = "agent-ready") -> Delivery:
+        """What GitHub would send when someone labels the issue (``agent-ready`` unless a workflow listens for another label)."""
+        payload = {"action": "labeled", "repository": {"full_name": REPO}, "sender": {"login": "ana-demo"}, "label": {"name": label},
+                   "issue": {"number": number, "title": title, "body": body, "labels": [{"name": label}]}}
         return github_delivery(GITHUB_WEBHOOK_SECRET.encode(), "issues", payload, delivery_id)
 
     def transcript(self) -> dict[str, list[str]]:

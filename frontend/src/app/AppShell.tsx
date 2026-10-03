@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { onUnauthorized, setToken } from '../api/auth'
+import { getDemoInfo } from '../api/platform'
 import { CommandPalette } from '../design/CommandPalette'
 import { Icon, type IconName } from '../design/icons'
 import { Dialog, Drawer, ToastProvider } from '../design/overlay'
@@ -115,6 +116,22 @@ function HelpDialog() {
   )
 }
 
+/** Shown only by `patchquest demo`: its model answers, GitHub and Slack are simulated, and the numbers on screen say so. */
+function DemoBanner() {
+  const [demo, setDemo] = useState(false)
+  useEffect(() => {
+    const c = new AbortController()
+    getDemoInfo(c.signal).then(d => setDemo(!!d.demo)).catch(() => undefined)
+    return () => c.abort()
+  }, [])
+  if (!demo) return null
+  return (
+    <p className="demo-banner" role="note">
+      <strong>Demo environment.</strong> Model answers, GitHub and Slack are simulated, so timings and token counts come from scripted models. The pipeline, ledger, policy and metrics are the real ones.
+    </p>
+  )
+}
+
 function Page({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="page"><Skeleton width="100%" height={160} /></div>}>{children}</Suspense>
 }
@@ -199,6 +216,7 @@ function Shell() {
           <Button variant="primary" icon="plus" onClick={app.openNewRun} className="topbar__new"><span className="topbar__new-label">New run</span></Button>
           <ThemeButton />
         </header>
+        <DemoBanner />
         <main id="main" tabIndex={-1} className="main">
           {page}
         </main>

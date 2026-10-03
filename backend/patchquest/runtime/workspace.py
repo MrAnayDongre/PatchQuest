@@ -17,7 +17,7 @@ from patchquest.memory.repo_indexer import IGNORED_DIRS
 from patchquest.patching import Change, DeleteFile, PatchResult, WriteFile, apply_changes, sha256_bytes
 from patchquest.paths import resolve_in_repo
 
-WORKSPACE_BASE = Path.home() / ".patchquest" / "sandboxes"
+WORKSPACE_BASE = Path(os.environ.get("PATCHQUEST_SANDBOX_DIR") or Path.home() / ".patchquest" / "sandboxes")  # a demo keeps these with its own data
 MAX_COPY_BYTES = 750 * 1024 * 1024
 SECRET_FILE_NAMES = {
     ".env", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".netrc", ".git-credentials", ".npmrc", ".pypirc",

@@ -3,6 +3,8 @@ import { DataTable } from '../design/data'
 import { Card, CardHeader, MetricCard, Skeleton } from '../design/primitives'
 import { useAsync } from '../hooks/useAsync'
 import { humanize } from '../lib/format'
+
+const SOURCE_NAMES: Record<string, string> = { github: 'GitHub', slack: 'Slack', linear: 'Linear', jira: 'Jira', notion: 'Notion', webhook: 'Webhook' }
 import { count, rate, seconds } from '../lib/metricsView'
 import { ErrorNotice } from './common'
 
@@ -69,7 +71,7 @@ export function OperationsSection({ window }: { window: string }) {
             <DataTable caption="Inbound events" rows={Object.entries(d.workflows.inbound)} rowKey={([k]) => k}
               empty={<p className="ui-muted">No events arrived from integrations in this window.</p>}
               columns={[
-                { key: 's', header: 'Source', render: ([k]) => <strong>{humanize(k)}</strong> },
+                { key: 's', header: 'Source', render: ([k]) => <strong>{SOURCE_NAMES[k] ?? humanize(k)}</strong> },
                 { key: 'r', header: 'Results', render: ([, st]) => Object.entries(st).map(([k, n]) => `${humanize(k)} ${n}`).join(' · ') },
               ]} />
           </Card>

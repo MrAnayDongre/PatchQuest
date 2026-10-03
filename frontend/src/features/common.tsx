@@ -4,7 +4,7 @@ import type { Run } from '../api/types'
 import { Badge, Button, StatusIndicator } from '../design/primitives'
 import { Callout } from '../design/overlay'
 import { friendlyStatusLine } from '../lib/eventCopy'
-import { baseName, relativeTime } from '../lib/format'
+import { baseName, modelLabel, relativeTime } from '../lib/format'
 import { runHash } from '../lib/router'
 
 export function ErrorNotice({ error, onRetry, subject }: { error: unknown; onRetry?: () => void; subject?: string }) {
@@ -42,7 +42,7 @@ export function RunRow({ run, selected, now, id }: { run: Run; selected?: boolea
       <span className="run-row__main">
         <span className="run-row__task ui-truncate">{run.task}</span>
         <span className="run-row__meta ui-truncate">
-          {baseName(run.repo_path)} · {run.model ?? run.provider} · {friendlyStatusLine(run)}
+          {baseName(run.repo_path)} · {modelLabel(run.model) || run.provider} · {friendlyStatusLine(run)}
         </span>
       </span>
       <span className="run-row__side">

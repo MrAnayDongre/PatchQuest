@@ -69,7 +69,7 @@ export function ApprovalCard({ runId, approval, onDecided, onStale }: ApprovalCa
     <div className="approval" role="group" aria-label="Approval request">
       <div className="approval__top">
         <Badge tone={sideEffectTone(approval.sideEffect)}>{sideEffectLabel(approval.sideEffect)}</Badge>
-        <Badge tone={riskTone(approval.risk)}>{approval.risk} risk</Badge>
+        <Badge tone={riskTone(approval.risk)}>{approval.risk.replace(/_/g, ' ')} risk</Badge>
         {remaining !== null && (
           <span className="approval__timer" role="timer" aria-label={expired ? 'Request expired' : `Expires in ${formatDuration(remaining)}`}>
             {expired ? 'Expired. Treated as denied' : `Expires in ${formatDuration(remaining)}`}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CodeBlock } from '../../design/data'
 import { Badge, Button, Field, Input, Segmented, Textarea } from '../../design/primitives'
 import { Callout, Dialog } from '../../design/overlay'
-import { relativeTime } from '../../lib/format'
+import { actorLabel, relativeTime } from '../../lib/format'
 import type { ActionMeta } from '../../lib/workflow/clientCheck'
 import { NODE_COPY } from '../../lib/workflow/copy'
 import { labelText } from '../../lib/workflow/edgeRules'
@@ -179,7 +179,7 @@ export function VersionsDialog({ currentId, currentVersion, open, onClose }: { c
               {v.version === newest && <Badge tone="success">Newest</Badge>}
               {v.id === currentId && <Badge tone="info">Open now</Badge>}
               {v.status !== 'active' && <Badge tone="muted">{v.status}</Badge>}
-              <span className="ui-muted">{v.created_by ? `${v.created_by}, ` : ''}{relativeTime(v.created_at)}</span>
+              <span className="ui-muted">{v.created_by ? `${actorLabel(v.created_by)}, ` : ''}{relativeTime(v.created_at)}</span>
               {v.id !== currentId && (
                 <a href={`#/workflows/${encodeURIComponent(v.id)}`} onClick={onClose}>{v.version === newest ? 'Open' : 'Open (read-only)'}</a>
               )}

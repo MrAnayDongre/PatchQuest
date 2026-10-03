@@ -20,6 +20,7 @@ page.on('console', m => { if (m.type() === 'error' && !/404 \(Not Found\)/.test(
 const shot = name => page.screenshot({ path: join(out, name + '.png') })
 const api = async path => (await fetch(base + path)).json()
 const go = async hash => { await page.goto(base + '/' + hash, { waitUntil: 'networkidle' }); await page.waitForTimeout(500) }
+const tag = process.env.TAG ? process.env.TAG + '-' : ''
 const ev = {}
 const log = (k, v) => { ev[k] = v; console.log(k, JSON.stringify(v)) }
 
@@ -27,7 +28,7 @@ if (phase === 'wait') {
   const deadline = Date.now() + 120000
   let runs = []
   while (Date.now() < deadline) {
-    runs = (await api('/api/workflows/runs')).filter(r => r.status !== 'cancelled')
+    runs = (await api('/api/workflows/runs')).filter(r => ['pending', 'running', 'waiting'].includes(r.status))
     const detail = await Promise.all(runs.map(r => api('/api/workflows/runs/' + r.id)))
     if (runs.length && detail.every(d => d.steps?.some(s => s.node_id && s.status === 'waiting' && s.wait_kind === 'approval'))) break
     await new Promise(r => setTimeout(r, 1000))
@@ -38,14 +39,14 @@ if (phase === 'wait') {
     i += 1
     await go(`#/workflows/runs/${r.id}`)
     await page.getByRole('button', { name: 'Approve' }).first().waitFor({ timeout: 30000 })
-    await shot(`l${i}-workflow-run-waiting`)
+    await shot(`l${tag}${i}-workflow-run-waiting`)
     const d = await api('/api/workflows/runs/' + r.id)
     const child = d.steps.find(s => s.child_run_id)?.child_run_id
     if (child && i === 1) {
       await go(`#/runs/${child}`)
-      await shot('l-run-activity')
-      await page.getByRole('tab', { name: /changes/i }).click(); await page.waitForTimeout(600); await shot('l-run-changes')
-      await page.getByRole('tab', { name: /why/i }).click(); await page.waitForTimeout(600); await shot('l-run-why')
+      await shot(`l${tag}-run-activity`)
+      await page.getByRole('tab', { name: /changes/i }).click(); await page.waitForTimeout(600); await shot(`l${tag}-run-changes`)
+      await page.getByRole('tab', { name: /why/i }).click(); await page.waitForTimeout(600); await shot(`l${tag}-run-why`)
       const run = await api('/api/runs/' + child)
       log('agent_run', { id: child, status: run.status, outcome: run.outcome ?? null, verdict: run.verdict ?? null })
     }
@@ -69,7 +70,7 @@ if (phase === 'approve') {
     await new Promise(r => setTimeout(r, 1000))
   }
   log('workflow_run_states_after_approval', states)
-  if (runs[0]) { await go(`#/workflows/runs/${runs[0].id}`); await shot('l-workflow-run-done') }
+  if (runs[0]) { await go(`#/workflows/runs/${runs[0].id}`); await shot(`l${tag}-workflow-run-done`) }
 }
 
 if (phase === 'tour') {
@@ -82,6 +83,6 @@ if (phase === 'tour') {
   }
 }
 log('console_errors', errors)
-writeFileSync(join(out, `live-${phase}.json`), JSON.stringify(ev, null, 2))
+writeFileSync(join(out, `live-${tag}${phase}.json`), JSON.stringify(ev, null, 2))
 await browser.close()
 process.exit(errors.length ? 1 : 0)

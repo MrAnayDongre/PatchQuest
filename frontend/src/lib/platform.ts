@@ -5,6 +5,12 @@ import { humanize, plural } from './format'
 export const ALL_PERMISSIONS = ['run.read', 'run.create', 'settings.read', 'settings.write', 'connector.manage', 'repository.manage']
 export const LOCAL_WORKSPACE = { id: 'ws_local', name: 'Local workspace', role: 'owner', permissions: ALL_PERMISSIONS }
 
+/** A remembered fact's key as a person would read it ("profile.test_commands" -> "test commands"; "run:ab12…" -> "note from an earlier run"). */
+function factName(key: string): string {
+  if (key.startsWith('profile.')) return key.slice(8).replace(/_/g, ' ')
+  return key.startsWith('run:') ? 'note from an earlier run' : key
+}
+
 /* ------------------------------------------------------------ integrations */
 /** Comma- or newline-separated entries, trimmed, blanks dropped, duplicates removed. */
 export function parseList(text: string): string[] {
@@ -214,7 +220,7 @@ export function explain(e: Explanation): WhyEntry {
       if (p.low_confidence_rejected) details.push(`${plural(Number(p.low_confidence_rejected), 'fact')} left out for low confidence`)
       if (p.over_budget) details.push(`${plural(Number(p.over_budget), 'fact')} left out to stay within the memory budget`)
       for (const i of Array.isArray(p.items) ? (p.items as Obj[]) : []) {
-        details.push(`${i.key} (${memorySourceLabel(String(i.source)).toLowerCase()}${i.trusted === false ? ', untrusted' : ''})${i.reason ? `: ${i.reason}` : ''}`)
+        details.push(`${factName(String(i.key))} (${memorySourceLabel(String(i.source)).toLowerCase()}${i.trusted === false ? ', untrusted' : ''})${i.reason ? `: ${i.reason}` : ''}`)
       }
       return { ...base, title: `Remembered ${n} of ${plural(considered, 'fact')} (about ${plural(tokens, 'token')})`, details, tone: 'neutral' }
     }

@@ -144,3 +144,12 @@ def test_the_kill_the_worker_demo_recovers_with_one_write_and_a_real_sigkill(tmp
     assert out.returncode == 0, out.stdout + out.stderr
     assert "killing it with SIGKILL" in out.stdout and "run_interrupted" in out.stdout and "patch applied 1 time(s); repository fixed: True" in out.stdout
     assert "planner model calls 1" in out.stdout and "duplicate side effects 0" in out.stdout and "resumed at phase 'patching'" in out.stdout
+
+
+def test_the_sandbox_directory_can_be_chosen_by_environment():
+    import subprocess
+    import sys
+
+    code = "from patchquest.runtime.workspace import WORKSPACE_BASE; print(WORKSPACE_BASE)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, env={**os.environ, "PATCHQUEST_SANDBOX_DIR": "/srv/pq/boxes"})
+    assert out.stdout.strip() == "/srv/pq/boxes"

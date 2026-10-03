@@ -3,7 +3,7 @@ import type { Run } from '../../api/types'
 import { Badge, Button, StatusIndicator } from '../../design/primitives'
 import type { Connection } from '../../hooks/useRunStream'
 import { friendlyStatusLine } from '../../lib/eventCopy'
-import { baseName, elapsed, formatDuration } from '../../lib/format'
+import { baseName, elapsed, formatDuration, modelLabel } from '../../lib/format'
 import { isActiveStatus, type RunState } from '../../lib/runState'
 import { LineageBadge } from '../common'
 
@@ -58,7 +58,7 @@ export function RunHeader({ run, state, connection, onCancel, onResume, onFork, 
       </div>
       <ul className="run-header__meta">
         <li title={run.repo_path}>{baseName(run.repo_path)}</li>
-        <li>{run.model ? `${run.provider} / ${run.model}` : run.provider}</li>
+        <li>{run.model ? `${run.provider} / ${modelLabel(run.model)}` : run.provider}</li>
         <li>{run.runtime_mode === 'docker' ? 'Docker' : 'Local'}</li>
         {run.dry_run && <li>Dry run</li>}
         {ms !== null && <li>{active ? 'Running for ' : 'Took '}{formatDuration(ms)}</li>}
