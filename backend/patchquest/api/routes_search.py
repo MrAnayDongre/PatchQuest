@@ -5,6 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from patchquest.api.auth import CurrentPrincipal
+from patchquest.domain.failures import PatchQuestError
+from patchquest.domain.identity import Permission
+
 router = APIRouter(prefix="/api/search", tags=["search"])
 
 
@@ -15,6 +19,7 @@ class SearchQueryRequest(BaseModel):
     result_type: str | None = None
     domains: list[str] | None = None
     force_refresh: bool = False
+    workspace_id: str = "ws_local"  # whose policy decides which search hosts may be contacted
 
 
 @router.get("/providers")
@@ -39,9 +44,12 @@ async def search_status():
 
 
 @router.post("/query")
-async def search_query(req: SearchQueryRequest):
+async def search_query(req: SearchQueryRequest, principal: CurrentPrincipal):
     from patchquest.config import get_config
+    from patchquest.runtime import policy as policy_runtime
     cfg = get_config()
+    if not principal.can(Permission.RUN_READ, req.workspace_id):
+        raise HTTPException(status_code=404, detail="Not found")
     if not cfg.search.enabled:
         raise HTTPException(status_code=400, detail="Search is disabled")
 
@@ -59,8 +67,11 @@ async def search_query(req: SearchQueryRequest):
             provider_name=req.provider,
             options=options,
             cache_ttl=cfg.search.cache_ttl_seconds,
+            policy_chain=policy_runtime.chain_for(workspace_id=req.workspace_id),
         )
         return result.model_dump()
+    except PatchQuestError as e:
+        raise HTTPException(status_code=403, detail=e.detail) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

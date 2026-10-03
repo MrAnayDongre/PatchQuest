@@ -675,3 +675,20 @@ class TestPreferenceVersusPolicy:
         assert failed["status"] == "failed" and "does not override this" in failed["error"] and actions.calls == []
         why = failed["output"]["explanation"]
         assert why["because"][0]["policy"] == "system-floor" and why["overrode_preference"]["value"] == "auto"
+
+
+class TestEgressPolicy:
+    @pytest.mark.asyncio
+    async def test_a_disclosure_rule_blocks_the_connector_call_before_it_is_made(self, engine, actions, repo):
+        from patchquest.runtime import policy as pol
+        pol.store({"name": "no-github-metadata", "scope": "workspace",
+                   "rules": [{"action": "artifact.disclose:metadata:github", "result": "DENY", "reason": "nothing about our runs goes to github"}]},
+                  scope_ref=WS, actor="user:admin")
+        from patchquest.workflows.catalog import ACTIONS
+        actions.infos["github.comment"] = ACTIONS["github.comment"]  # the catalog's real declaration of what the action sends
+        script_agent()
+        run_id = engine.start(save(engine, flow(repo)), {"type": "manual", "payload": {"title": "t"}})
+        await waiting_at(engine, run_id, "gate")
+        await engine.decide(run_id, "gate", "approve", "user:ana")
+        await settle(engine, run_id, lambda r: step(run_id, "post")["status"] == "failed")
+        assert actions.calls == [] and "blocked by policy 'no-github-metadata'" in step(run_id, "post")["error"]

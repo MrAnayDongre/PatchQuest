@@ -39,11 +39,41 @@ limits: {agent.max_model_calls: 20, agent.max_commands: 30}
 | run creation, fork, replay | `agent.*` ceilings | overrides and defaults are clamped |
 | a run starting | `model.use.<provider>` | `DENY` fails the run with `POLICY_DENIED` before any model call |
 | memory about to be shown to a model | `memory.inject.local` / `memory.inject.cloud` | `DENY` keeps remembered notes out of that call |
+| a web search about to contact a provider | `network.read.domain:<host>` | anything but `ALLOW` refuses the search before the request |
+| a workflow action that sends data out | `artifact.disclose:<class>:<destination>` (and, for a read, `network.read.domain:<host>`) | fails the step before the connector or plugin is called |
+| a hosted model provider about to receive the task's source | `artifact.disclose:source_code:model_provider` | fails the run with `POLICY_DENIED`; local providers are exempt |
+| `patchquest export` | `artifact.disclose:<class>:portable_bundle` | refuses before any file is written |
 
 A policy change applies to the next run (or resume); a running run keeps the chain it loaded.
 
-Not yet enforced by policy: network access and artifact disclosure. Those still
-use the existing config switches (`safety.*`, failover) until the corresponding subsystems call `decide`.
+## Network reads and artifact disclosure
+
+These are ordinary policy actions, matched by the same patterns and combined the same way (strictest wins, narrower scopes can
+only tighten), not a second system.
+
+* **Network reads** are `network.read.domain:<host>` with effect `NETWORK_READ` (`*.pypi.org` patterns work). Writing to an
+  external system stays `action.<connector.action>` with `EXTERNAL_WRITE`.
+* **Disclosure** is `artifact.disclose:<class>:<destination>`. Classes: `metadata`, `logs`, `diff`, `source_code`, `test_output`,
+  `model_io`, `trajectory`, `artifact`, `secret`. A destination is a kind (`model_provider`, `connector`, `portable_bundle`,
+  `external_api`) or a specific name (`github`, `slack`, a plugin); both are evaluated and the stricter answer applies.
+* `secret` is denied by the system floor and no stored policy can change that. An unknown class or destination is refused.
+* With no policy, ordinary reads and disclosures are allowed (as for `model.use`); restrict by policy. An allowlist is one policy
+  with `ALLOW` rules followed by a catch-all `DENY` (the first matching rule within a policy speaks):
+
+```yaml
+name: docs-only
+scope: workspace
+rules:
+  - {action: "network.read.domain:docs.github.com", result: ALLOW}
+  - {action: "network.read.domain:*", result: DENY, reason: destination is not permitted by effective policy}
+  - {action: "artifact.disclose:source_code:model_provider", result: DENY, reason: source stays on local models}
+```
+
+`patchquest policy explain network.read.domain:unknown.example --effect NETWORK_READ` prints the action, decision, reason and source.
+These points cannot ask a person, so `REQUIRE_APPROVAL` there is treated as a refusal. Which classes a workflow action discloses is
+declared in the action catalog (`workflows/catalog.py`); the declarations are coarse (a comment is `metadata`, a pull request is `diff`).
+Not covered: reads performed by commands inside the sandbox (that is the sandbox's network setting), and connector reads other than
+`notion.read_page`.
 
 ## Commands
 

@@ -118,6 +118,7 @@ def _need_approval(reason: str, *effects: SideEffect) -> Rule:
 
 # The floor every deployment starts from; stored policies can only add to it.
 SYSTEM_FLOOR = Policy("system-floor", Scope.SYSTEM, (
+    Rule("artifact.disclose:secret:*", Result.DENY, "secrets are never disclosed outside the runtime"),
     _need_approval("it changes the repository", SideEffect.REPOSITORY_WRITE),
     _need_approval("it changes something outside this machine", SideEffect.EXTERNAL_WRITE),
     _need_approval("it changes the host outside the repository", SideEffect.HOST_MUTATION),
@@ -207,6 +208,11 @@ def evaluate(policies: Iterable[Policy], action: str, side_effect: SideEffect | 
         best = PolicyDecision(best.action, best.result, best.reason_code, best.reason, best.source_policy, best.scope,
                               limits, best.side_effect)
     return best
+
+
+def strictest(decisions: Iterable[PolicyDecision]) -> PolicyDecision:
+    """The most restrictive of several decisions (the first one wins a tie)."""
+    return max(decisions, key=lambda d: _STRICTNESS[d.result])
 
 
 def effective_limits(policies: Iterable[Policy]) -> dict[str, tuple[float, Policy]]:

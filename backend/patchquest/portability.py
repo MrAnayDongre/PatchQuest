@@ -28,6 +28,8 @@ from patchquest.domain.runs import TERMINAL, RunStatus
 from patchquest.persistence import checkpoints, ledger
 from patchquest.persistence.migrations import current_version
 from patchquest.persistence.schema import MIGRATIONS
+from patchquest.runtime import egress
+from patchquest.runtime import policy as policy_runtime
 from patchquest.support_bundle import scrub
 
 FORMAT = 1
@@ -54,6 +56,9 @@ def export_run(run_id: str, dest: Path, *, include_model_io: bool = False, inclu
         run = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         if run is None:
             raise LookupError(run_id)
+        classes = ["metadata", "logs", *(["model_io"] if include_model_io else []), *(["diff", "source_code"] if include_code else [])]
+        egress.enforce(egress.decide_disclosure(policy_runtime.chain_for(workspace_id=run["workspace_id"]), classes, "portable_bundle"),
+                       "exporting this run")
         events = ledger.read(conn, run_id, limit=1_000_000)
         approvals = [{k: r[k] for k in r.keys()} for r in conn.execute("SELECT * FROM approvals WHERE run_id = ?", (run_id,))]
         calls = [{k: r[k] for k in r.keys()} for r in conn.execute("SELECT * FROM model_calls WHERE run_id = ? ORDER BY id", (run_id,))]

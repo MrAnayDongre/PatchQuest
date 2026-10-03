@@ -19,14 +19,14 @@ from patchquest.domain.workflows import ActionInfo
 
 ACTIONS: dict[str, ActionInfo] = {
     "notify.log": ActionInfo(SideEffect.PURE),  # records a message in the workflow's own history
-    "github.comment": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "github.add_label": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "github.create_pull_request": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "slack.post_message": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "linear.comment": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "jira.comment": ActionInfo(SideEffect.EXTERNAL_WRITE),
-    "notion.read_page": ActionInfo(SideEffect.NETWORK_READ),  # a read: needs no approval; its text is untrusted data
-    "webhook.post": ActionInfo(SideEffect.EXTERNAL_WRITE, idempotent=False),
+    "github.comment": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("metadata",)),
+    "github.add_label": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("metadata",)),
+    "github.create_pull_request": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("diff",)),
+    "slack.post_message": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("metadata",)),
+    "linear.comment": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("metadata",)),
+    "jira.comment": ActionInfo(SideEffect.EXTERNAL_WRITE, discloses=("metadata",)),
+    "notion.read_page": ActionInfo(SideEffect.NETWORK_READ, network_host="api.notion.com"),  # a read: needs no approval; its text is untrusted data
+    "webhook.post": ActionInfo(SideEffect.EXTERNAL_WRITE, idempotent=False, discloses=("artifact",)),
 }
 
 # The workspace whose integrations an action runs against; set by the engine around each call.

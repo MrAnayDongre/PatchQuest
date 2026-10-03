@@ -82,6 +82,7 @@ async def search(
     provider_name: str | None = None,
     options: SearchOptions | None = None,
     cache_ttl: int = 3600,
+    policy_chain: list | None = None,
 ) -> SearchResponse:
     from patchquest.config import get_config
     cfg = get_config()
@@ -108,6 +109,11 @@ async def search(
             provider_cfg = {k: v for k, v in pcfg.model_dump().items() if k != "enabled" and v is not None}
 
     provider = get_search_provider(provider_name, **provider_cfg)
+
+    if policy_chain is not None:  # the caller's tenant policy decides which hosts may be contacted
+        from patchquest.runtime import egress
+
+        egress.enforce(egress.decide_network_read(policy_chain, getattr(provider, "base_url", "") or ""), f"searching via {provider_name}")
 
     try:
         response = await provider.search(query, opts)

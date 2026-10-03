@@ -342,6 +342,8 @@ def matches(filter_: Mapping[str, Any], event: Mapping[str, Any]) -> bool:
 class ActionInfo:
     side_effect: SideEffect
     idempotent: bool = True
+    discloses: tuple[str, ...] = ()  # data classes (domain.egress) this action sends out
+    network_host: str = ""  # for a read: the service host policy sees (``network.read.domain:<host>``)
 
 
 @dataclass(frozen=True)

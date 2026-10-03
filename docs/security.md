@@ -98,7 +98,8 @@ policy, and that external writes need a human.
 Decisions are made by deterministic code, strictest answer wins, narrower scopes can only tighten, a malformed stored policy denies,
 and the system floor cannot be relaxed. Enforced at command execution, workflow actions, run creation/fork/replay (limit ceilings),
 model/provider use and memory injection. `ALLOW_WITH_LIMITS` constraints are reported in the decision but no enforcement point consumes
-them yet; network reads and artifact disclosure are not yet policy actions.
+them yet. Network reads (web search, `notion.read_page`) and artifact disclosure (workflow actions, hosted model providers, export)
+are policy actions; see [policy](policy.md).
 
 ## Tenancy and secrets *(implemented, tested)* - see [tenancy](tenancy.md), [integrations](integrations.md)
 
@@ -145,5 +146,5 @@ Findings from adversarial review of the new surfaces, each with a regression tes
 - Work started by the system with no person behind it (a webhook-triggered workflow) is not subject to a project's team restriction.
 - `PATCHQUEST_DEMO=1` registers demo endpoints that open and fake GitHub issues; never set it outside a demo.
 - `GET /api/metrics` costs O(runs in the window) (about 30 ms for a tenant with 3,300 runs).
-- Not implemented: SSO/OIDC, per-tenant quotas, retention/deletion APIs, per-tenant encryption keys, a policy on network reads and
-  artifact disclosure.
+- Not implemented: SSO/OIDC, per-tenant quotas, retention/deletion APIs, per-tenant encryption keys. Egress policy covers the
+  enforcement points listed in [policy](policy.md); network access from commands inside a local-mode shadow workspace is not policed.

@@ -222,7 +222,7 @@ class PluginHost:
             self.discover()
         with get_db() as conn:
             enabled = {s["name"] for s in store.list_state(conn) if s["state"] == PluginState.ENABLED.value}
-        return {f"plugin.{d.name}.{c.name}": ActionInfo(c.side_effect, c.idempotent)
+        return {f"plugin.{d.name}.{c.name}": ActionInfo(c.side_effect, c.idempotent, discloses=("artifact",))
                 for d in self._found.values() if d.manifest is not None and d.name in enabled and d.manifest.kind is PluginKind.TOOL
                 for c in d.manifest.capabilities.values()}
 

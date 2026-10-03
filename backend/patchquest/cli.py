@@ -744,12 +744,16 @@ def _cmd_export(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from patchquest import portability
+    from patchquest.domain.failures import PatchQuestError
 
     try:
         names = portability.export_run(args.run_id, Path(args.dest), include_model_io=args.model_io, include_code=args.code)
     except LookupError:
         print(f"error: no run {args.run_id}", file=sys.stderr)
         return EXIT_USAGE
+    except PatchQuestError as exc:  # a policy refused to let this run leave
+        print(f"error: {exc.detail}", file=sys.stderr)
+        return EXIT_FAILED
     except (FileExistsError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_FAILED

@@ -36,8 +36,9 @@ from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
 from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
+from patchquest.providers.failover import LOCAL_PROVIDERS
+from patchquest.runtime import egress, run_memory
 from patchquest.runtime import policy as policy_runtime
-from patchquest.runtime import run_memory
 from patchquest.tools.secret_guard import redact_secrets
 
 if TYPE_CHECKING:
@@ -463,6 +464,12 @@ class RunStateMachine:
             await self._emit("model_denied", message=f"Policy '{verdict.source_policy}' does not allow the {self.ctx.provider} provider",
                              payload={"policy": verdict.to_dict()})
             raise PatchQuestError(FailureKind.POLICY_DENIED, f"{self.ctx.provider} is not allowed by policy '{verdict.source_policy}': {verdict.reason}")
+        if self.ctx.provider not in LOCAL_PROVIDERS:  # a hosted provider receives the task's source code
+            leak = egress.decide_disclosure(await self._policy_chain(), ("source_code",), "model_provider", self.ctx.provider)
+            if not leak.allowed:
+                await self._emit("model_denied", message=f"Policy '{leak.source_policy}' does not let source code go to {self.ctx.provider}",
+                                 payload={"policy": leak.to_dict()})
+                egress.enforce(leak, f"sending source code to {self.ctx.provider}")
 
     async def _policy_chain(self) -> list[Any]:
         """The policies that apply to this run, loaded once per machine (a policy change applies to the next run or resume)."""

@@ -98,7 +98,7 @@ failures are mostly the model inventing search text that is not in the file. A 0
 better model and to attribute each failure to the model, the harness or the environment.
 
 **Not done**, stated plainly: SSO/OIDC, per-tenant quotas, object-storage artifacts, Kubernetes manifests, live verification of any connector,
-a multi-host test, policy on network reads and artifact disclosure, a branch-push action (so no automatic pull requests), and an accessibility audit with
+a multi-host test, a branch-push action (so no automatic pull requests), and an accessibility audit with
 assistive technology (the UI has had one visual QA pass at desktop, laptop and phone widths, light and dark). Nothing in this repository is validated for
 "thousands of teams"; the measured ceiling is in the benchmarks. Read [security](docs/security.md) for the model, the attack-pass findings and the known
 limitations before relying on any of it.

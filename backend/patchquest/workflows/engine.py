@@ -32,7 +32,7 @@ from patchquest.application.service import TaskService
 from patchquest.config import validate_overrides
 from patchquest.database import get_db
 from patchquest.domain.failures import Origin, PatchQuestError, classify
-from patchquest.domain.policy import Result
+from patchquest.domain.policy import Result, strictest
 from patchquest.domain.workflows import (
     REQUIRES_APPROVAL_EFFECTS,
     ActionInfo,
@@ -49,8 +49,8 @@ from patchquest.domain.workflows import (
 )
 from patchquest.persistence import identity as ids
 from patchquest.persistence.ledger import now_iso
+from patchquest.runtime import egress, run_memory
 from patchquest.runtime import policy as policy_runtime
-from patchquest.runtime import run_memory
 from patchquest.runtime.retry import run_with_retry
 from patchquest.workflows import store
 from patchquest.workflows.catalog import acting_in
@@ -554,6 +554,25 @@ class WorkflowEngine:
         if self.service.get_run(child_id)["status"] == "created" and not self.service.is_active(child_id):
             self.service.launch(child_id)
 
+    def _boundary_allows(self, run: dict[str, Any], wf: Workflow, node: Node, step: dict[str, Any], name: str, info: ActionInfo) -> bool:
+        """Policy on what leaves the runtime: the data classes this action sends and, for a read, the host it contacts.
+        Fails the step (and returns False) before any outbound call."""
+        if not info.discloses and not info.network_host:
+            return True
+        chain = policy_runtime.chain_for(workspace_id=run["workspace_id"], workflow_id=run["workflow_id"])
+        verdicts = []
+        if info.discloses:
+            kind, label = ("external_api", name.split(".")[1]) if name.startswith("plugin.") else ("connector", name.split(".", 1)[0])
+            verdicts.append(egress.decide_disclosure(chain, info.discloses, kind, label))
+        if info.network_host:
+            verdicts.append(egress.decide_network_read(chain, info.network_host))
+        verdict = strictest(verdicts)
+        if verdict.allowed:
+            return True
+        self._step_failed(run, wf, node, step, f"'{name}' is blocked by policy '{verdict.source_policy}': {verdict.reason or verdict.reason_code}",
+                          {"policy": verdict.to_dict()})
+        return False
+
     async def _action(self, run: dict[str, Any], wf: Workflow, node: Node, step: dict[str, Any]) -> bool:
         name, key = str(node.config["action"]), step["idempotency_key"]
         info = self.actions.info(name)
@@ -569,6 +588,8 @@ class WorkflowEngine:
         if decision.result is Result.DENY:
             self._step_failed(run, wf, node, step, f"'{name}' is blocked by policy '{decision.source_policy}': {decision.reason}",
                               {"policy": decision.to_dict()})
+            return True
+        if not self._boundary_allows(run, wf, node, step, name, info):
             return True
         if decision.approval_required and approver is None and not self._allow_unapproved_writes:
             detail: dict[str, Any] = {"policy": decision.to_dict()}
