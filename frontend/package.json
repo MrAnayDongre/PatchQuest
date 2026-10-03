@@ -10,7 +10,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "test:features": "vitest run tests/features",
-    "test:components": "vitest run tests/components"
+    "test:components": "vitest run tests/components",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
