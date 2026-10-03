@@ -96,3 +96,9 @@ async def test_service_accounts_can_start_but_not_approve(world, flows):
     async with world.client("ci_a") as c:
         assert (await c.post(f"/api/workflows/{wf}/runs", json={})).status_code == 200
         assert (await c.post(f"/api/workflows/runs/{run}/steps/gate/decision", json={"decision": "approve"})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_another_tenant_cannot_list_a_workflows_versions(world, flows):
+    async with world.client("owner_b") as c:
+        assert (await c.get(f"/api/workflows/{flows['a'][0]}/versions")).status_code == 404

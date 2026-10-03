@@ -29,6 +29,7 @@ from patchquest.tools.secret_guard import has_secrets
 SCHEMA_VERSION = 1
 MAX_NODES = 200
 MAX_VISITS_LIMIT = 20
+MAX_COORDINATE = 100_000.0
 
 
 class NodeType(StrEnum):
@@ -88,6 +89,8 @@ class Workflow:
     variables: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)  # name -> {"default": ..., "required": bool}
     description: str = ""
     schema: int = SCHEMA_VERSION
+    # Editor-only: where each node sits on the canvas. Never read by the engine or the validator's graph rules.
+    layout: Mapping[str, Mapping[str, float]] = field(default_factory=dict)
 
     def node(self, node_id: str) -> Node:
         return next(n for n in self.nodes if n.id == node_id)
@@ -124,7 +127,7 @@ def parse(raw: Mapping[str, Any]) -> Workflow:
     def bad(code: str, message: str, node: str | None = None) -> None:
         problems.append(Problem(code, message, node))
 
-    unknown = set(raw) - {"schema", "name", "description", "trigger", "nodes", "edges", "variables"}
+    unknown = set(raw) - {"schema", "name", "description", "trigger", "nodes", "edges", "variables", "layout"}
     if unknown:
         bad("unknown_field", f"unknown top-level field(s): {', '.join(sorted(unknown))}")
     if raw.get("schema", SCHEMA_VERSION) != SCHEMA_VERSION:
@@ -197,10 +200,23 @@ def parse(raw: Mapping[str, Any]) -> Workflow:
     if not isinstance(variables, Mapping) or not all(isinstance(k, str) and isinstance(v, Mapping) for k, v in variables.items()):
         bad("variables", "variables must map a name to {default, required}")
         variables = {}
+    layout_raw = raw.get("layout") or {}
+    layout: dict[str, dict[str, float]] = {}
+    known_ids = {n.id for n in nodes}
+    if not isinstance(layout_raw, Mapping):
+        bad("layout", "layout must map a node id to {x, y}")
+    else:
+        for node_id, pos in layout_raw.items():
+            ok = (isinstance(pos, Mapping) and set(pos) <= {"x", "y"} and set(pos) == {"x", "y"}
+                  and all(isinstance(pos[k], int | float) and not isinstance(pos[k], bool) and abs(pos[k]) <= MAX_COORDINATE for k in ("x", "y")))
+            if node_id not in known_ids or not ok:
+                bad("layout", f"layout entry '{node_id}' must be for an existing node with numeric x and y within +/-{MAX_COORDINATE:g}")
+            else:
+                layout[node_id] = {"x": float(pos["x"]), "y": float(pos["y"])}
     if problems:
         raise DefinitionError(problems)
     return Workflow(name=name, trigger=trigger, nodes=tuple(nodes), edges=tuple(edges),  # type: ignore[arg-type]
-                    variables={k: dict(v) for k, v in variables.items()}, description=str(raw.get("description") or ""))
+                    variables={k: dict(v) for k, v in variables.items()}, description=str(raw.get("description") or ""), layout=layout)
 
 
 def to_dict(wf: Workflow) -> dict[str, Any]:
@@ -212,6 +228,7 @@ def to_dict(wf: Workflow) -> dict[str, Any]:
                    **({"max_visits": n.max_visits} if n.max_visits != 1 else {})} for n in wf.nodes],
         "edges": [{"from": e.source, "to": e.target, **({"when": e.when} if e.when else {})} for e in wf.edges],
         "variables": {k: dict(v) for k, v in wf.variables.items()},
+        **({"layout": {k: dict(v) for k, v in wf.layout.items()}} if wf.layout else {}),
     }
 
 

@@ -216,6 +216,16 @@ async def get_workflow(workflow_id: str, request: Request, principal: CurrentPri
     return row
 
 
+@router.get("/{workflow_id}/versions")
+async def versions(workflow_id: str, request: Request, principal: CurrentPrincipal) -> list[dict[str, Any]]:
+    row = _workflow_row(workflow_id)
+    _authorize(request, principal, row["workspace_id"], Permission.RUN_READ, workflow_id)
+    with get_db() as conn:
+        found = conn.execute("SELECT id, version, status, created_by, created_at FROM workflows WHERE workspace_id = ? AND name = ? "
+                             "ORDER BY version DESC", (row["workspace_id"], row["name"])).fetchall()
+    return [{k: r[k] for k in r.keys()} for r in found]
+
+
 @router.post("/{workflow_id}/runs")
 async def start_run(workflow_id: str, body: StartBody, request: Request, principal: CurrentPrincipal) -> dict[str, str]:
     row = _workflow_row(workflow_id)

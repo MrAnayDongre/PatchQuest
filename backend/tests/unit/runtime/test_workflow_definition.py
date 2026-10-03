@@ -252,3 +252,24 @@ class TestTriggerFilters:
     ])
     def test_matching(self, flt, expected):
         assert matches(flt, self.EVENT) is expected
+
+
+class TestLayout:
+    def test_positions_round_trip_and_are_ignored_by_validation(self):
+        raw = flow()
+        raw["layout"] = {"fix": {"x": 10, "y": 20.5}, "gate": {"x": -40, "y": 300}}
+        wf = parse(raw)
+        assert wf.layout["fix"] == {"x": 10.0, "y": 20.5}
+        assert to_dict(wf)["layout"] == {"fix": {"x": 10.0, "y": 20.5}, "gate": {"x": -40.0, "y": 300.0}}
+        assert validate(wf, ValidationPolicy(known_actions=ACTIONS)) == []
+        assert "layout" not in to_dict(parse(flow()))  # absent when there is none
+
+    @pytest.mark.parametrize("layout", [
+        {"ghost": {"x": 1, "y": 2}}, {"fix": {"x": 1}}, {"fix": {"x": "1", "y": 2}}, {"fix": {"x": 1, "y": 2, "z": 3}},
+        {"fix": {"x": 10**9, "y": 0}}, {"fix": {"x": True, "y": 0}}, {"fix": [1, 2]}, [("fix", 1)]])
+    def test_bad_layouts_are_rejected(self, layout):
+        raw = flow()
+        raw["layout"] = layout
+        with pytest.raises(DefinitionError) as err:
+            parse(raw)
+        assert "layout" in {p.code for p in err.value.problems}

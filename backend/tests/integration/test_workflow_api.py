@@ -146,3 +146,20 @@ async def test_the_palette_endpoints_describe_actions_and_templates():
         one = (await c.get("/api/workflows/templates/issue-to-proposal")).json()
         assert one["requires"] == ["github"] and one["definition"]["name"] == "issue-to-proposal"
         assert (await c.get("/api/workflows/templates/nope")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_versions_are_listed_newest_first_and_layout_is_stored(tmp_path):
+    repo = make_calc_repo(tmp_path / "r")
+    first = definition(repo)
+    first["layout"] = {"fix": {"x": 5, "y": 6}}
+    async with client() as c:
+        v1 = (await c.post("/api/workflows", json={"definition": first})).json()
+        v2 = (await c.post("/api/workflows", json={"definition": definition(repo)})).json()
+        listed = (await c.get(f"/api/workflows/{v2['id']}/versions")).json()
+        assert [v["version"] for v in listed] == [2, 1] and listed[1]["id"] == v1["id"]
+        assert (await c.get(f"/api/workflows/{v1['id']}")).json()["definition"]["layout"] == {"fix": {"x": 5.0, "y": 6.0}}
+        assert (await c.get("/api/workflows/wf_nope/versions")).status_code == 404
+        bad = definition(repo)
+        bad["layout"] = {"ghost": {"x": 1, "y": 1}}
+        assert (await c.post("/api/workflows", json={"definition": bad})).status_code == 422
