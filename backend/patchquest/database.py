@@ -40,8 +40,120 @@ def set_db_path(path: Path) -> None:
     _DB_PATH = path
 
 
+_PG_DSN: str | None = None
+_PG_SCHEMA: str | None = None
+INTEGRITY_ERRORS: tuple[type[BaseException], ...] = (sqlite3.IntegrityError,)
+
+
+def _env_postgres() -> tuple[str, str | None] | None:
+    dsn = os.environ.get("PATCHQUEST_DATABASE_URL")
+    return (dsn, os.environ.get("PATCHQUEST_DATABASE_SCHEMA")) if dsn else None
+
+
+def use_postgres(dsn: str, schema: str | None = None) -> None:
+    """Use PostgreSQL (team / server mode) instead of the SQLite file. ``schema`` namespaces a install inside a database."""
+    global _PG_DSN, _PG_SCHEMA, INTEGRITY_ERRORS
+    _PG_DSN, _PG_SCHEMA = dsn, schema
+    from patchquest import dbpg
+
+    INTEGRITY_ERRORS = (sqlite3.IntegrityError, dbpg.IntegrityError)
+
+
+def use_sqlite() -> None:
+    global _PG_DSN, _PG_SCHEMA, INTEGRITY_ERRORS
+    if _PG_DSN:
+        from patchquest import dbpg
+
+        dbpg.close_pool(_PG_DSN, _PG_SCHEMA)
+    _PG_DSN = _PG_SCHEMA = None
+    INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
+
+
+_FORCE_SQLITE = False
+
+
+@contextmanager
+def isolated_sqlite(path: Path) -> Generator[None, None, None]:
+    """A throwaway SQLite database for the duration, whatever the install normally uses (evaluation and recovery
+    experiments must never write into real run history, and a PostgreSQL install must not be touched by them)."""
+    global _FORCE_SQLITE, _DB_PATH
+    saved_force, saved_path = _FORCE_SQLITE, _DB_PATH
+    _FORCE_SQLITE, _DB_PATH = True, path
+    try:
+        init_db()
+        yield
+    finally:
+        _FORCE_SQLITE, _DB_PATH = saved_force, saved_path
+
+
+def child_environment() -> dict[str, str]:
+    """Environment that makes a child process use the same database as this one."""
+    target = postgres_target()
+    if target is None:
+        return {"PATCHQUEST_DB": str(get_db_path())}
+    env = {"PATCHQUEST_DATABASE_URL": target[0]}
+    if target[1]:
+        env["PATCHQUEST_DATABASE_SCHEMA"] = target[1]
+    return env
+
+
+def postgres_target() -> tuple[str, str | None] | None:
+    """(dsn, schema) when running on PostgreSQL, else None. An explicit ``use_postgres`` wins over the environment."""
+    if _FORCE_SQLITE:
+        return None
+    if _PG_DSN:
+        return _PG_DSN, _PG_SCHEMA
+    env = _env_postgres()
+    if env:
+        use_postgres(*env)
+        return env
+    return None
+
+
+def describe_target() -> str:
+    """Where the data lives, safe to print: the SQLite path, or host:port/database with no credentials."""
+    target = postgres_target()
+    if target is None:
+        return str(get_db_path())
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(target[0])
+    return f"postgresql://{parts.hostname}:{parts.port or 5432}{parts.path}" + (f" (schema {target[1]})" if target[1] else "")
+
+
+def database_exists() -> bool:
+    return is_postgres() or get_db_path().exists()
+
+
+def is_postgres() -> bool:
+    return postgres_target() is not None
+
+
+def begin_write(conn: Any) -> None:
+    """Start a transaction that no other writer can overlap (SQLite: ``BEGIN IMMEDIATE``; PostgreSQL: advisory lock)."""
+    conn.execute("BEGIN IMMEDIATE")
+
+
+def lock_rows() -> str:
+    """Suffix for a SELECT that claims rows other workers must skip instead of waiting for."""
+    return " FOR UPDATE SKIP LOCKED" if is_postgres() else ""
+
+
+def serialize(conn: Any, key: str) -> None:
+    """Make writers using the same ``key`` take turns until commit (PostgreSQL only; SQLite writers already do)."""
+    if getattr(conn, "dialect", None) == "postgresql":
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (key,))
+
+
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
+    target = postgres_target()
+    if target is not None:
+        from patchquest import dbpg
+
+        with dbpg.connect(*target) as pg:
+            yield pg  # type: ignore[misc]
+        return
     conn = sqlite3.connect(str(get_db_path()), timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -62,6 +174,13 @@ def init_db() -> None:
     from patchquest.persistence.migrations import migrate
     from patchquest.persistence.schema import MIGRATIONS
 
+    if is_postgres():
+        with get_db() as conn:
+            migrate(conn, MIGRATIONS, None)
+        from patchquest.memory.code_graph import init_code_graph as _init
+
+        _init()
+        return
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _make_private(db_path)

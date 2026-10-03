@@ -20,7 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from patchquest.database import get_db
+from patchquest.database import get_db, is_postgres, lock_rows
 from patchquest.domain.runs import RunStatus
 from patchquest.persistence import ledger
 from patchquest.persistence.runs import transition
@@ -52,8 +52,11 @@ def enqueue(conn: sqlite3.Connection, run_id: str, *, actor: str, reason: str = 
 def claim(worker_id: str, lease_s: float, *, now: datetime | None = None) -> Claim | None:
     moment = now or datetime.fromisoformat(ledger.now_iso())
     with get_db() as conn:
-        conn.execute("BEGIN IMMEDIATE")  # serialises claimers across processes
-        row = conn.execute("SELECT id, attempt, lease_epoch FROM runs WHERE status = 'queued' ORDER BY queued_at, id LIMIT 1").fetchone()
+        if not is_postgres():
+            conn.execute("BEGIN IMMEDIATE")  # SQLite: one writer at a time serialises claimers across processes
+        # PostgreSQL: concurrent claimers each lock a different queued row; SKIP LOCKED passes over rows another holds.
+        row = conn.execute("SELECT id, attempt, lease_epoch FROM runs WHERE status = 'queued' ORDER BY queued_at, id LIMIT 1"
+                           + lock_rows()).fetchone()
         if row is not None:
             epoch = row["lease_epoch"] + 1
             transition(conn, row["id"], RunStatus.RUNNING, actor=f"worker:{worker_id}", reason="claimed by a worker",
@@ -63,7 +66,7 @@ def claim(worker_id: str, lease_s: float, *, now: datetime | None = None) -> Cla
             return Claim(row["id"], "start", epoch, row["attempt"])
         dead = conn.execute(
             f"SELECT id, status, attempt, current_phase, lease_owner FROM runs WHERE status IN ({','.join('?' * len(LIVE))}) "
-            "AND lease_owner IS NOT NULL AND lease_expires_at < ? ORDER BY lease_expires_at, id LIMIT 1",
+            "AND lease_owner IS NOT NULL AND lease_expires_at < ? ORDER BY lease_expires_at, id LIMIT 1" + lock_rows(),
             (*LIVE, _iso(moment))).fetchone()
         if dead is None:
             return None

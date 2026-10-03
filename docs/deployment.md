@@ -4,7 +4,8 @@
 |---|---|---|
 | **A. Local** | one process on a laptop: `patchquest run`, or `patchquest serve` + UI. SQLite in `~/.patchquest`. | implemented, tested |
 | **B. Single host, queued** | API container(s) + worker container(s) sharing one SQLite volume. Runs survive a worker crash. | implemented, tested (real SIGKILL, real containers) |
-| **C. Multi-host / multi-tenant at scale** | workers on several machines, a network database, object storage | **not implemented** (designed only) |
+| **C. Team server (PostgreSQL)** | PostgreSQL + API + workers on one or several hosts that can reach the database. | implemented; **whole test suite passes on PostgreSQL 16**; containers not yet exercised end to end (see below) |
+| **D. At scale** | object storage for artifacts, SSO, per-tenant quotas, TLS, lease-fenced writes | **not implemented** |
 
 Use the words precisely: mode B is *tested* and *load-tested at the control-plane level* ([benchmarks](benchmarks.md)); nothing
 here is validated for "thousands of teams" beyond those measurements.
@@ -36,6 +37,37 @@ docker compose up -d --scale worker=3
   database on NFS or share it across hosts.
 - Mount repositories read-write only where runs should be able to promote, and set `safety.allowed_roots`.
 
+## C. Team server (PostgreSQL)
+
+```bash
+pip install 'patchquest[server]'                      # the psycopg driver is optional; the images include it
+export PATCHQUEST_DATABASE_URL=postgresql://patchquest:...@db.internal:5432/patchquest
+patchquest doctor                                      # shows the server version and schema, never the password
+patchquest admin init --org Acme --workspace main --owner you
+patchquest serve --host 0.0.0.0 &                      # API (PATCHQUEST_QUEUE_MODE=true: it queues, workers execute)
+patchquest worker                                      # run on as many hosts as you like
+```
+`docker compose -f docker-compose.server.yml up -d --scale worker=3` does the same with a PostgreSQL container.
+`PATCHQUEST_DATABASE_SCHEMA` namespaces an install inside a shared database.
+
+- **One code path.** SQLite and PostgreSQL run the same persistence code; `dbpg.py` translates the few dialect
+  differences (placeholders, `OR IGNORE`, identity columns, the append-only triggers, `lastrowid`). Local mode is
+  unchanged. **Evidence:** the full backend suite (1690 tests, including real SIGKILL of API and worker processes and
+  tenant-isolation tests) passes on PostgreSQL 16 in a per-test schema; the 8 skipped tests exercise SQLite files
+  directly (backup/restore of a database file, legacy-file upgrade). `tests/server/` adds the multi-process
+  properties: 40 queued runs claimed by 8 concurrent workers exactly once each (`FOR UPDATE SKIP LOCKED`), a dead
+  worker's run recovered by exactly one of six rescuers, six processes booting together migrate once (advisory lock),
+  a reader following the event cursor never skips an event while six writers commit concurrently (per-run advisory
+  lock - PostgreSQL assigns ids before commit), failed transactions leave nothing, foreign keys and append-only
+  triggers raise, hot queries have indexes, a lock timeout becomes `DATABASE_FAILURE`.
+- **Transactions:** every `get_db()` block is one transaction on a pooled connection (default isolation, READ
+  COMMITTED); state changes are compare-and-set (`UPDATE ... WHERE status = ?`), so concurrent writers cannot both win.
+- **Backups:** use PostgreSQL's own tools - `pg_dump -Fc "$PATCHQUEST_DATABASE_URL" > pq.dump`, restore with
+  `pg_restore -d <empty db>`. `patchquest backup` refuses on PostgreSQL and says so. Back up repositories separately.
+- **Not done:** write fencing by lease epoch (a worker that lost its lease can still write until its next heartbeat),
+  read replicas, connection-pool sizing guidance (the pool is 20 per process), and any measurement of control-plane
+  throughput on PostgreSQL (the published numbers in [benchmarks](benchmarks.md) are SQLite on one host).
+
 ## Probes
 
 `/live` - the process is up. `/ready` - the database opens, the schema version equals what this release expects,
@@ -48,10 +80,11 @@ patchquest backup create /backups/pq-$(date +%F).db   # consistent snapshot, saf
 patchquest backup verify /backups/pq-2026-10-02.db    # integrity, schema, append-only guards, every checkpoint checksum
 patchquest backup restore /backups/pq-2026-10-02.db --yes   # stop API and workers first; the old file is kept
 ```
-Migrations run on start. Before the first migration of an existing database a `<db>.pre-v<N>.bak` copy is written, and a
-database from a *newer* release is refused. Upgrade = back up, replace the image, start; roll back = restore.
+Migrations run on start (on PostgreSQL, under an advisory lock, so many processes may start together). Before the first
+migration of an existing SQLite database a `<db>.pre-v<N>.bak` copy is written, and a database from a *newer* release is
+refused. Upgrade = back up, replace the image, start; roll back = restore. On PostgreSQL take a `pg_dump` first.
 
 ## What is not here
 
-PostgreSQL, S3-compatible artifact storage, OIDC/SSO, per-tenant quotas, a TLS terminator, Kubernetes manifests.
-Moving to mode C needs the database layer abstracted (today it is SQLite-specific SQL) and write fencing by lease epoch.
+S3-compatible artifact storage, OIDC/SSO, per-tenant quotas, a TLS terminator, Kubernetes manifests, lease-epoch write
+fencing, PostgreSQL performance numbers.

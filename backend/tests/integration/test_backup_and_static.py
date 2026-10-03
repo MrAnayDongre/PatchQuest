@@ -24,6 +24,7 @@ async def populated(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_a_backup_is_a_consistent_verified_private_copy(populated, tmp_path):
     dest = tmp_path / "backups" / "pq.db"
     report = backup.create(get_db_path(), dest)
@@ -35,6 +36,7 @@ async def test_a_backup_is_a_consistent_verified_private_copy(populated, tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_verify_catches_damage(populated, tmp_path):
     dest = tmp_path / "pq.db"
     backup.create(get_db_path(), dest)
@@ -49,6 +51,7 @@ async def test_verify_catches_damage(populated, tmp_path):
     assert any("checkpoint(s) fail their checksum" in p for p in report.problems)
 
 
+@pytest.mark.sqlite_only
 def test_verify_rejects_things_that_are_not_backups(tmp_path):
     assert "does not exist" in backup.verify(tmp_path / "nope.db").problems[0]
     junk = tmp_path / "junk.db"
@@ -60,6 +63,7 @@ def test_verify_rejects_things_that_are_not_backups(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_a_newer_schema_is_refused_and_an_older_one_is_noted_not_failed(populated, tmp_path):
     dest = tmp_path / "pq.db"
     backup.create(get_db_path(), dest)
@@ -75,6 +79,7 @@ async def test_a_newer_schema_is_refused_and_an_older_one_is_noted_not_failed(po
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_restore_replaces_the_database_and_keeps_the_old_one(populated, tmp_path):
     dest = tmp_path / "pq.db"
     backup.create(get_db_path(), dest)
@@ -89,6 +94,7 @@ async def test_restore_replaces_the_database_and_keeps_the_old_one(populated, tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_restore_refuses_a_bad_backup_and_a_database_in_use(populated, tmp_path):
     bad = tmp_path / "bad.db"
     bad.write_bytes(b"x" * 5000)
@@ -107,6 +113,7 @@ async def test_restore_refuses_a_bad_backup_and_a_database_in_use(populated, tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.sqlite_only
 async def test_cli_backup_commands(populated, tmp_path, capsys):
     dest = tmp_path / "cli.db"
     assert cli.main(["backup", "create", str(dest), "--json"]) == cli.EXIT_OK

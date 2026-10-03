@@ -90,9 +90,32 @@ def check_config() -> list[Check]:
     return out
 
 
-def check_database() -> Check:
-    from patchquest.database import get_db_path
+def _check_postgres() -> Check:
+    from patchquest.database import describe_target, get_db
+    from patchquest.persistence.migrations import current_version
+    from patchquest.persistence.schema import MIGRATIONS
 
+    where = describe_target()
+    try:
+        with get_db() as conn:
+            version = str(conn.execute("SHOW server_version").fetchone()[0])
+            have = current_version(conn)
+    except Exception as exc:  # any driver or network error is a failed check, not a crash
+        return Check("database", FAIL, f"{where}: {type(exc).__name__}: {str(exc)[:120]}",
+                     "Check PATCHQUEST_DATABASE_URL, that PostgreSQL is running, and that `pip install 'patchquest[server]'` was done")
+    latest = max(m.version for m in MIGRATIONS)
+    if have > latest:
+        return Check("database", FAIL, f"{where}: schema v{have} is newer than this PatchQuest (v{latest})", "Upgrade PatchQuest")
+    if have < latest:
+        return Check("database", WARN, f"{where}: schema v{have}, will migrate to v{latest} on start", "Run `patchquest serve` or any command once")
+    return Check("database", OK, f"{where} (PostgreSQL {version}, schema v{have})")
+
+
+def check_database() -> Check:
+    from patchquest.database import get_db_path, is_postgres
+
+    if is_postgres():
+        return _check_postgres()
     path = get_db_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,11 +221,11 @@ def check_providers() -> list[Check]:
 
 
 def check_schema() -> Check:
-    from patchquest.database import get_db, get_db_path
+    from patchquest.database import database_exists, get_db
     from patchquest.persistence.migrations import current_version
     from patchquest.persistence.schema import MIGRATIONS
 
-    if not get_db_path().exists():
+    if not database_exists():
         return Check("schema", INFO, "no database yet; it is created on first use")
     try:
         with get_db() as conn:
@@ -262,9 +285,9 @@ def check_git_hardening() -> Check:
 def check_queue_and_runs() -> list[Check]:
     from datetime import UTC, datetime, timedelta
 
-    from patchquest.database import get_db, get_db_path
+    from patchquest.database import database_exists, get_db
 
-    if not get_db_path().exists():
+    if not database_exists():
         return []
     out: list[Check] = []
     try:

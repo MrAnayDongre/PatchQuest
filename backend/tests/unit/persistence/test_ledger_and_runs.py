@@ -188,6 +188,7 @@ class TestMigrations:
         raw.close()
         return path
 
+    @pytest.mark.sqlite_only
     def test_legacy_database_upgrades_in_place_keeping_history_and_gets_a_backup(self, tmp_path):
         path = self._legacy_db(tmp_path)
         set_db_path(path)

@@ -20,7 +20,7 @@ from typing import Any
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.application.service import TaskService
 from patchquest.config import get_config
-from patchquest.database import get_db, init_db, set_db_path
+from patchquest.database import get_db, isolated_sqlite
 from patchquest.evaluation.metrics import RESULT_SCHEMA, EvalReport, TaskResult, attribute, classify, summarize
 from patchquest.evaluation.tasks import EvalTask, corpus_digest, load_corpus
 from patchquest.execution.executor import run_argv, scrubbed_env
@@ -142,20 +142,14 @@ def _environment(provider: str, model: str | None, base_url: str | None) -> dict
 def isolated_environment() -> Iterator[tuple[TaskService, Path]]:
     """A throwaway database and repository directory for evaluation: eval runs never touch the user's run history,
     and approvals are denied immediately instead of waited on (unattended)."""
-    from patchquest.database import get_db_path
-
     config = get_config()
     saved_timeout = config.safety.approval_timeout_seconds
     config.safety.approval_timeout_seconds = 0
-    previous_db = get_db_path()
-    with tempfile.TemporaryDirectory(prefix="pq-eval-") as tmp:
-        set_db_path(Path(tmp) / "eval.db")
-        init_db()
+    with tempfile.TemporaryDirectory(prefix="pq-eval-") as tmp, isolated_sqlite(Path(tmp) / "eval.db"):
         try:
             yield TaskService(), Path(tmp) / "repos"
         finally:
             config.safety.approval_timeout_seconds = saved_timeout
-            set_db_path(previous_db)
 
 
 async def run_eval(*, corpus: str | Path | None = None, only: str | None = None, provider: str = "scripted",

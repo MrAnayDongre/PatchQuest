@@ -320,15 +320,9 @@ def test_report_docker_runtime_from_context():
 
 
 def test_report_docker_runtime_from_run_record(tmp_path):
-    import sqlite3
+    from patchquest.database import get_db
 
-    from patchquest.database import init_db, set_db_path
-
-    db_path = tmp_path / "report.db"
-    set_db_path(db_path)
-    init_db()
-
-    with sqlite3.connect(str(db_path)) as conn:
+    with get_db() as conn:
         conn.execute(
             """INSERT INTO runs (id, repo_path, task, status, provider, model, runtime_mode,
                memory_mode, allow_network, dry_run, created_at, updated_at)
@@ -336,7 +330,6 @@ def test_report_docker_runtime_from_run_record(tmp_path):
             ("docker-run", "/tmp/repo", "Inspect", "completed", "nvidia", "openai/gpt-oss-20b",
              "docker", "repo", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
         )
-        conn.commit()
 
     report = generate_report_from_run_record("docker-run")
     assert "**Runtime:** docker" in report["report_md"]

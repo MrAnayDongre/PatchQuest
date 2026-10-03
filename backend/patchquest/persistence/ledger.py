@@ -37,6 +37,10 @@ def append(
 ) -> tuple[int, str]:
     """Append one event. Returns ``(cursor, event_uid)``."""
     event_uid = uuid.uuid4().hex
+    # PostgreSQL hands out ids before commit, so two writers could commit out of order and a streaming client
+    # resuming from a cursor would skip an event. Taking turns per run keeps each run's ids committing in order.
+    if getattr(conn, "dialect", None) == "postgresql":
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"events:{run_id}",))
     cursor = conn.execute(
         """INSERT INTO run_events (run_id, type, phase, status, message, payload_json, created_at,
                event_uid, schema_version, actor, attempt, correlation_id, causation_id)

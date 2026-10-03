@@ -33,6 +33,9 @@ tree-sitter = [
     "tree-sitter-go>=0.23.0",
     "tree-sitter-java>=0.23.0",
 ]
+server = [
+    "psycopg[binary,pool]>=3.2,<4",
+]
 caldav = [
     "caldav>=1.3.0",
 ]
@@ -61,6 +64,7 @@ markers = [
     "docker: needs a reachable Docker daemon and the patchquest-sandbox image (skipped otherwise)",
     "live: talks to a real model endpoint; never run by default",
     "mocked_protocol: exercises an integration against a simulated server (MOCKED_PROTOCOL_TEST); not live-verified",
+    "sqlite_only: exercises SQLite files or SQLite-only processes directly; skipped when the suite runs on PostgreSQL",
 ]
 
 [tool.ruff]

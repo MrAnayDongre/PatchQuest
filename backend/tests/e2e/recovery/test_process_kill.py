@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from patchquest.agents.providers_scripted import ScriptedProvider
-from patchquest.database import get_db, get_db_path
+from patchquest.database import child_environment, get_db
 from patchquest.persistence import checkpoints
 from patchquest.recovery import recover_interrupted_runs
 from patchquest.runtime.resume import RecoveryCategory, plan_resume
@@ -57,7 +57,7 @@ CHILD = textwrap.dedent("""
 
 def _run_child(tmp_path: Path, repo: Path, kill_on: str) -> tuple[str, str, subprocess.CompletedProcess]:
     run_id, name = str(uuid.uuid4()), f"script-{uuid.uuid4()}"
-    env = {**os.environ, "PATCHQUEST_DB": str(get_db_path()), "HOME": str(tmp_path / "home"), "PYTHONPATH": str(BACKEND),
+    env = {**os.environ, **child_environment(), "HOME": str(tmp_path / "home"), "PYTHONPATH": str(BACKEND),
            "PYTHONDONTWRITEBYTECODE": "1"}
     env.pop("PATCHQUEST_API_TOKEN", None)
     (tmp_path / "home").mkdir(exist_ok=True)

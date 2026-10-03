@@ -52,25 +52,29 @@ def _config() -> dict[str, Any]:
 
 
 def _database() -> dict[str, Any]:
-    from patchquest.persistence.migrations import current_version
+    from patchquest.database import database_exists, is_postgres
+    from patchquest.persistence.migrations import current_version, table_exists
     from patchquest.persistence.schema import MIGRATIONS
 
-    path = get_db_path()
-    if not path.exists():
+    if not database_exists():
         return {"exists": False}
     with get_db() as conn:
         counts = {}
         for table in ("runs", "run_events", "checkpoints", "approvals", "audit_log", "workflows", "workflow_runs"):
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (table,)).fetchone():
+            if table_exists(conn, table):
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         by_status = {r[0]: r[1] for r in conn.execute("SELECT status, COUNT(*) FROM runs GROUP BY status")}
-        return {"exists": True, "size_mb": round(path.stat().st_size / 1048576, 2), "schema_version": current_version(conn),
+        size = (conn.execute("SELECT pg_database_size(current_database())").fetchone()[0] if is_postgres()
+                else get_db_path().stat().st_size)
+        return {"exists": True, "backend": "postgresql" if is_postgres() else "sqlite", "size_mb": round(size / 1048576, 2),
+                "schema_version": current_version(conn),
                 "expected_schema_version": max(m.version for m in MIGRATIONS), "counts": counts, "runs_by_status": by_status}
 
 
 def _failures(limit: int = 25) -> list[dict[str, Any]]:
-    path = get_db_path()
-    if not path.exists():
+    from patchquest.database import database_exists
+
+    if not database_exists():
         return []
     out = []
     with get_db() as conn:

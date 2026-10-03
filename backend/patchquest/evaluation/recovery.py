@@ -21,7 +21,7 @@ from typing import Any
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.application import TaskService
 from patchquest.config import get_config
-from patchquest.database import get_db, get_db_path, init_db, set_db_path
+from patchquest.database import get_db, isolated_sqlite
 from patchquest.evaluation.faults import SimulatedCrash, after_event, crash_when
 from patchquest.evaluation.runner import ORACLE_TIMEOUT, _materialize, _script_for
 from patchquest.evaluation.tasks import EvalTask, load_corpus
@@ -181,18 +181,14 @@ async def run_recovery(*, only: str | None = None) -> dict[str, Any]:
     config = get_config()
     saved = config.safety.approval_timeout_seconds
     config.safety.approval_timeout_seconds = 0
-    previous = get_db_path()
     results: list[ScenarioResult] = []  # the scenarios; the uninterrupted baseline is reported separately
-    with tempfile.TemporaryDirectory(prefix="pq-recovery-") as tmp:
-        set_db_path(Path(tmp) / "recovery.db")
-        init_db()
+    with tempfile.TemporaryDirectory(prefix="pq-recovery-") as tmp, isolated_sqlite(Path(tmp) / "recovery.db"):
         try:
             baseline = await _run_scenario(BASELINE, task, Path(tmp) / "repos", None)
             for sc in scenarios:
                 results.append(await _run_scenario(sc, task, Path(tmp) / "repos", baseline.model_calls))
         finally:
             config.safety.approval_timeout_seconds = saved
-            set_db_path(previous)
     passed = sum(1 for r in results if r.passed)
     return {"class": "recovery", "baseline": baseline.to_dict(), "scenarios": [r.to_dict() for r in results],
             "summary": {"scenarios": len(results), "passed": passed, "pass_rate": round(passed / len(results), 4) if results else None}}

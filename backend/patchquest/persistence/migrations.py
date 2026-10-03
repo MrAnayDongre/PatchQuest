@@ -45,7 +45,7 @@ def run_script(conn: sqlite3.Connection, script: str) -> None:
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}  # PostgreSQL: translated to information_schema
 
 
 def add_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -53,6 +53,13 @@ def add_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -
     for name, definition in columns.items():
         if name not in present:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    if getattr(conn, "dialect", None) == "postgresql":
+        return conn.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?",
+                            (name,)).fetchone() is not None
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
 
 
 def current_version(conn: sqlite3.Connection) -> int:
@@ -66,7 +73,7 @@ def _has_user_data(conn: sqlite3.Connection) -> bool:
     """True for a database worth backing up: migrated before, or created by a pre-migration release."""
     if current_version(conn) > 0:
         return True
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").fetchone() is not None
+    return table_exists(conn, "runs")
 
 
 def pending(conn: sqlite3.Connection, migrations: list[Migration]) -> list[Migration]:
@@ -88,8 +95,27 @@ def backup_database(conn: sqlite3.Connection, db_path: Path, version: int) -> Pa
     return target
 
 
+MIGRATE_LOCK = 727_270_002
+
+
 def migrate(conn: sqlite3.Connection, migrations: list[Migration], db_path: Path | None = None) -> list[int]:
-    """Apply pending migrations in order. Returns the versions applied."""
+    """Apply pending migrations in order. Returns the versions applied.
+
+    On PostgreSQL several processes may start at once; a session-level advisory lock makes them take turns, and the
+    pending list is computed only after the lock is held, so each migration is applied exactly once.
+    """
+    shared = getattr(conn, "dialect", None) == "postgresql"
+    if shared:
+        conn.execute("SELECT pg_advisory_lock(?)", (MIGRATE_LOCK,))
+    try:
+        return _apply(conn, migrations, db_path)
+    finally:
+        if shared:
+            conn.execute("ROLLBACK")
+            conn.execute("SELECT pg_advisory_unlock(?)", (MIGRATE_LOCK,))
+
+
+def _apply(conn: sqlite3.Connection, migrations: list[Migration], db_path: Path | None) -> list[int]:
     todo = pending(conn, migrations)
     applied: list[int] = []
     for migration in todo:

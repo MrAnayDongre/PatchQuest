@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from patchquest import database
 from patchquest.application.service import TaskService
 from patchquest.config import validate_overrides
 from patchquest.database import get_db
@@ -152,7 +153,7 @@ class WorkflowEngine:
                              "created_by, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)",
                              (run_id, workflow_id, meta["workspace_id"], json.dumps(trigger, default=str), trigger_key,
                               json.dumps(merged, default=str), created_by, now, now))
-            except sqlite3.IntegrityError:
+            except database.INTEGRITY_ERRORS:
                 return None  # the same external event again
             for entry in wf.entries():
                 self._new_step(conn, run_id, entry.id, 1)

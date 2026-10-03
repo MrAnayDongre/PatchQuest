@@ -694,7 +694,12 @@ def _cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from patchquest import backup
-    from patchquest.database import get_db_path
+    from patchquest.database import describe_target, get_db_path, is_postgres
+
+    if is_postgres():  # a PostgreSQL install is backed up with the database's own tools, which see all connections consistently
+        print(f"error: this install uses {describe_target()}; back it up with pg_dump (see docs/deployment.md), "
+              "and restore with pg_restore into an empty database", file=sys.stderr)
+        return EXIT_USAGE
 
     def show(report: backup.VerifyReport) -> None:
         if args.json:

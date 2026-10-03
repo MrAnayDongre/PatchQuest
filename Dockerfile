@@ -29,7 +29,7 @@ RUN useradd --create-home --uid 10001 --home-dir /nonexistent --shell /usr/sbin/
     && mkdir -p /data /repos && chown 10001:10001 /data /repos \
     && apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY --from=wheel /dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+RUN pip install --no-cache-dir /tmp/*.whl "psycopg[binary,pool]>=3.2,<4" && rm /tmp/*.whl  # the driver for server mode (PostgreSQL)
 COPY --from=ui /ui/dist /app/static
 USER 10001
 VOLUME ["/data"]

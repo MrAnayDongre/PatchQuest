@@ -18,7 +18,7 @@ import pytest
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.application import TaskService
 from patchquest.config import AppConfig, set_config
-from patchquest.database import get_db, get_db_path
+from patchquest.database import child_environment, get_db
 from patchquest.persistence import identity as ids
 from patchquest.persistence import ledger
 from patchquest.runtime.worker import Worker
@@ -147,7 +147,7 @@ def kill_a_worker_mid_run(tmp_path, repo, kill_on="checkpoint_created:patching")
     responses = {"planner": [PLAN] * 4, "coder": [FIX] * 4, "reviewer": [REVIEW] * 4}
     ScriptedProvider.register(model, responses)  # the surviving worker needs the same scripted model
     run_id = queued_run(repo, model)
-    env = {**os.environ, "PATCHQUEST_DB": str(get_db_path()), "HOME": str(tmp_path / "home"), "PYTHONPATH": str(BACKEND),
+    env = {**os.environ, **child_environment(), "HOME": str(tmp_path / "home"), "PYTHONPATH": str(BACKEND),
            "PYTHONDONTWRITEBYTECODE": "1"}
     env.pop("PATCHQUEST_API_TOKEN", None)
     (tmp_path / "home").mkdir(exist_ok=True)

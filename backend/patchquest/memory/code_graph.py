@@ -55,14 +55,16 @@ def upsert_node(
 ) -> int:
     now = now_iso()
     with get_db() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO code_nodes
+        row = conn.execute(
+            """INSERT INTO code_nodes
                (repo_path, node_type, name, file_path, line_start, line_end, parser_source, indexed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (repo_path, file_path, node_type, name, line_start) DO UPDATE SET
+                   line_end = excluded.line_end, parser_source = excluded.parser_source, indexed_at = excluded.indexed_at
+               RETURNING id""",
             (repo_path, node_type, name, file_path, line_start, line_end, parser_source, now),
-        )
-        row = conn.execute("SELECT last_insert_rowid()").fetchone()
-        return row[0]
+        ).fetchone()
+        return int(row[0])
 
 
 def add_edge(
