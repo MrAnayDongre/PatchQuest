@@ -113,7 +113,33 @@ class PatchQuestGym(gym.Env):
         self._inner.close()
 ```
 
-## CLI
+## Parallel rollouts and the CLI
 
 `python -m patchquest.rl.rollout --task bugfix-leap-year --policy oracle --out run.jsonl` (`--policy random --seed N`,
 `--max-steps`, `--drop-file-contents`).
+
+`patchquest gym rollout --policy oracle --seeds 4 --workers 4 --out traj/` plays every (task, seed) in parallel, each episode in its
+own environment and temp workspace, and writes `traj/<task>-s<seed>.jsonl`; `patchquest gym dataset traj/ --kind paired` builds a
+dataset from a directory. CPU only. The worker count changes speed, not results: the same jobs give identical trajectory ids and
+rewards at 1 or 4 workers (tested), a crashing policy loses its own episode only, and the random fuzzer in parallel stays inside
+each episode's workspace. `patchquest.rl.run_batch(policy_factory, task_ids=..., seeds=..., workers=...)` is the Python API; a
+policy that calls a model should bound its own concurrency.
+
+## Real runs as trajectories (the production -> training loop)
+
+`patchquest trajectory RUN [--out f.jsonl] [--model-io] [--summary]` (API: `patchquest.rl.production.build`) exports an actual run
+from its durable record: model calls, plan, selected context, commands, validation, approvals, the patch lifecycle, policy blocks
+- in time order, with the run's provider, model, lineage and token totals. It is a different schema (`production_trajectory`)
+because a real run has **no hidden oracle**: the reward is built from what was observed and what people decided:
+
+| component | value | meaning |
+|---|---|---|
+| `validation` | +1.0 | completed, verdict `passed` (or `no_tests` on a read-only task), outcome `applied`/`read_only`: the repository's own tests passed in the shadow workspace before anything was promoted |
+| `human` | -0.25 per approval denied/modified/cancelled | a person disagreed with the agent; approvals granted cost nothing |
+| `safety` | -0.5 per blocked command or denied model use, -0.5 if a secret finding stopped a patch | |
+| `cost` | -0.01 per model call | a small constant preference for fewer calls |
+
+These are defaults for ranking and filtering runs, not a claim about the right objective; the components are always reported
+separately. Prompts and responses are included only with `--model-io` and only if the run recorded them
+(`agent.record_model_io`); text is secret-scrubbed. Forks and replays carry their `parent_run_id`, so a fork that fixes what its
+parent got wrong is a ready-made preference pair.
