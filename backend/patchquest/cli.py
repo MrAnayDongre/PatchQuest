@@ -503,6 +503,30 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_trace(args: argparse.Namespace) -> int:
+    from patchquest.observability.trace import build_trace
+
+    try:
+        with get_db() as conn:
+            trace = build_trace(conn, args.run_id)
+    except LookupError:
+        print(f"error: no run {args.run_id}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.endpoint:
+        import httpx
+
+        try:
+            resp = httpx.post(args.endpoint, json=trace, timeout=10)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            print(f"error: could not export to {args.endpoint}: {exc}", file=sys.stderr)
+            return EXIT_FAILED
+        print(f"exported {len(trace['resourceSpans'][0]['scopeSpans'][0]['spans'])} spans to {args.endpoint}", file=sys.stderr)
+        return EXIT_OK
+    _emit_json(trace)
+    return EXIT_OK
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -729,6 +753,9 @@ def build_parser() -> argparse.ArgumentParser:
     mt.add_argument("--window", default="7d", help="30m, 24h, 7d, 2w (default 7d)")
     mt.add_argument("--by", choices=["model", "provider", "repository", "workspace"])
     mt.add_argument("--json", action="store_true")
+    tr_ = sub.add_parser("trace", help="export a run as an OpenTelemetry trace (OTLP/JSON)")
+    tr_.add_argument("run_id")
+    tr_.add_argument("--endpoint", help="POST it to an OTLP/HTTP collector, e.g. http://localhost:4318/v1/traces")
     en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
@@ -768,7 +795,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)
