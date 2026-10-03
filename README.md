@@ -1,323 +1,113 @@
 # PatchQuest
 
-**Local-first agentic coding harness for small and open-weight models.**
+**A durable, safe runtime for long-horizon software-engineering agents.** An agent works in an isolated copy of your
+repository, proves its change with your tests, and touches the real code only once - after validation, with hash checks,
+journaled so a crash can never leave it half-written. Every run is a persisted, replayable, forkable record, so you can
+kill the process mid-run, restart, and carry on; ask what happened and why; and swap the model at any checkpoint.
 
-![PatchQuest mission control UI](docs/assets/patchquest.png)
+It is built to work with **small and local models** first (SGLang, vLLM, llama.cpp, Ollama, LM Studio) and any
+OpenAI-compatible endpoint, and treats evaluation and recovery as product features, not afterthoughts.
 
-PatchQuest is a full-stack application—not a chat wrapper—that runs coding tasks through a deterministic phase pipeline. It combines repo indexing, role-isolated LLM calls, command safety checks, optional Docker sandboxing, structured patching, test execution, and PR-style final reports. A React mission-control UI streams run progress in real time.
+> There is no screenshot in this README on purpose: the UI was rebuilt and no browser was available to capture it.
+> Run it and look.
 
-Repository: [github.com/MrAnayDongre/PatchQuest](https://github.com/MrAnayDongre/PatchQuest)
+## What is real today
 
----
+Status words are literal. **Implemented** = code exists. **Tested** = a test fails if it breaks.
+**Measured** = numbers in [docs/benchmarks.md](docs/benchmarks.md). Test counts: 1,402 backend, 187 frontend.
 
-## Why PatchQuest
+| Capability | Status | Notes |
+|---|---|---|
+| Validated-patch pipeline: shadow workspace, tests, repair loop, baseline attribution, promote-after-validation | tested | live-model baseline is weak: see below |
+| Command policy, scrubbed env, process-group kill, Docker sandbox (no network, caps dropped, read-only root) | tested incl. real containers | Docker is not VM isolation |
+| Immutable event ledger, typed status transitions, versioned migrations with backup | tested | [docs/events.md](docs/events.md) |
+| Checksummed checkpoints, crash-safe `resume` (repo drift, journaled promotion, rollback) | tested incl. real `SIGKILL` | [docs/failure-recovery.md](docs/failure-recovery.md) |
+| Replay (state / recorded-model / live), fork from a checkpoint with another model, run lineage | tested | [docs/replay.md](docs/replay.md) |
+| Failure taxonomy, one retry engine, execution budgets, cancellation that reaches subprocess trees | tested | |
+| Approvals: once / for this run / deny / modify / cancel, side-effect classes, expiry | tested | [docs/approvals.md](docs/approvals.md) |
+| Organisations, workspaces, roles, hashed tokens, tenant isolation, audit log | tested (isolation matrix + mutation check) | [docs/security.md](docs/security.md) |
+| Durable workflows: approvals, timers, event waits, crash-safe actions, 4 templates | tested | [docs/workflows.md](docs/workflows.md) |
+| Connectors: signed webhooks, SSRF-guarded outbound, grant-enforcing contract, GitHub | tested against a **simulated** GitHub only | [docs/connectors.md](docs/connectors.md) |
+| Run queue + workers with leases; a killed worker's run is recovered by another | tested incl. real `SIGKILL` | single host |
+| Metrics derived from the ledger; OTLP trace export | tested | [docs/operations.md](docs/operations.md) |
+| Control-plane load: 1,000 orgs / 10,000 runs / 400k events | **measured** on one machine | [docs/benchmarks.md](docs/benchmarks.md) |
+| Container image + compose (API and workers), backups with verify/restore | built and run here | [docs/deployment.md](docs/deployment.md) |
+| Web UI: inspect any run from persisted state, approve from a phone-width screen, recover, fork, replay | typecheck + 187 tests + build; **never viewed in a browser** | |
+| Agent gym (hidden-oracle episodes, decomposed rewards, redacted trajectories) | tested | [docs/rl-gym.md](docs/rl-gym.md) |
 
-Small coding models fail when given open-ended autonomy. PatchQuest constrains them with:
+**Not built:** PostgreSQL / multi-host workers, SSO, a plugin loader, a drag-and-drop workflow builder, Slack/Jira/Linear/Notion
+connectors, a branch-push action (so no automatic pull requests), vector search, per-tenant quotas. Nothing in this repo has
+been validated for "thousands of teams"; the measured ceiling of one host is in the benchmarks.
 
-- **Fixed phase order** — intake through final report, with explicit skip/fail semantics
-- **Scoped context** — each role receives only the files and tools relevant to its phase
-- **Safety before execution** — SecretGuard, path checks, and command risk classification run before shell access
-- **Observable runs** — every transition is persisted to SQLite and streamed over SSE
+## Honest model results
 
-Mock mode runs the entire pipeline with deterministic outputs, so you can evaluate the product without API keys.
-
----
-
-## Features
-
-| Area | What it does |
-|------|----------------|
-| **Orchestration** | 12-phase state machine with event bus, approvals, and read-only task detection |
-| **Providers** | Mock, NVIDIA NIM/Build, OpenAI, Anthropic, Groq, Ollama, OpenRouter, OpenAI-compatible |
-| **Runtime** | Local host execution or isolated Docker sandbox |
-| **Repo memory** | Per-repo facts with hash-based invalidation; Tree-sitter symbol extraction + code graph |
-| **Scheduler** | One-shot and recurring tasks with provider/model/runtime/memory preserved per task |
-| **Web search** | Brave, Tavily, Serper, SerpApi, Google Programmable Search, DuckDuckGo, custom endpoint |
-| **Calendar** | Local SQLite calendar, ICS export, CalDAV/Google/Microsoft provider scaffolding |
-| **Safety** | SecretGuard, four-tier command risk, workspace boundaries, approval queue |
-| **Frontend** | Mission console, phase rail, reports, safety queue, scheduler, search, calendar, 8 mini-games |
-
----
-
-## Architecture
-
-![PatchQuest architecture](docs/assets/architecture.png)
-
-PatchQuest separates the mission-control UI, deterministic backend orchestration, provider layer, safety tools, repo intelligence, runtime sandboxing, and persistence into independently testable modules.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module-level detail.
-
-### Orchestration phases
-
-| # | Phase | Purpose |
-|---|-------|---------|
-| 1 | `intake` | Classify task type, risk, and languages |
-| 2 | `repo_scan` | Index files; extract symbols (Tree-sitter or fallback) |
-| 3 | `planning` | Produce bounded execution plan |
-| 4 | `research` | Web search for docs, CVEs, dependencies when needed |
-| 5 | `context_building` | Select minimal relevant files via code graph |
-| 6 | `analysis` | Read-only inspection output (skipped for mutation tasks) |
-| 7 | `patching` | Propose and apply structured diffs |
-| 8 | `static_checks` | Linters and type checkers |
-| 9 | `testing` | Auto-detected test suites (pytest, npm, cargo, go, make) |
-| 10 | `review` | Minimality and correctness review |
-| 11 | `security_scan` | SecretGuard + pattern analysis |
-| 12 | `final_report` | Markdown report with diffs, commands, and findings |
-
----
+On the bundled 14-task evaluation corpus with **Qwen3-0.6B** served locally by SGLang the success rate is **0 of 14** (best
+earlier run 1 of 14). Harness work (reasoning-output stripping, context budgeting, apply-feedback, indentation-tolerant
+edits) cut time and tokens about 4x; the remaining failures are mostly the model inventing search text that is not in the
+file. A 0.6B model is the floor, not the target: the point of the corpus is to measure a better model and to attribute each
+failure to the model, the harness or the environment. Results are in `docs/evals/`.
 
 ## Quick start
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- npm
-
-### Backend
+```bash
+cd backend && python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'
+patchquest doctor                          # checks the installation and safety boundaries
+patchquest run --repo ~/code/app --task "Fix add() so it returns the sum" --provider mock          # no model needed
+patchquest run --repo ~/code/app --task "..." --provider sglang --model Qwen/Qwen3-0.6B --base-url http://localhost:30000/v1
+```
+`mock`/`scripted` providers are deterministic fixtures. `patchquest engines` shows which local engines are running.
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-uvicorn patchquest.main:app --reload --port 8000
+patchquest status RUN | inspect RUN | events RUN | checkpoints RUN | diff RUN | report RUN
+patchquest resume RUN [--plan]             # after a crash; explains first, asks before anything uncertain
+patchquest fork RUN --from 6 --model other --set agent.max_model_calls=80
+patchquest replay RUN --mode state|model|live
+patchquest metrics --window 7d --by model  |  patchquest trace RUN   |  patchquest queue  |  patchquest worker
+patchquest workflows templates|save|start|decide ...        patchquest admin init|token ...      patchquest backup create|verify|restore
+patchquest eval run --provider scripted    # the evaluation corpus; `eval compare A.json B.json` flags regressions
 ```
+Exit codes: `0` ok, `1` failed, `2` patch rejected, `3` interrupted, `4` a person must decide first, `64` usage.
 
-Entry point: `backend/patchquest/main.py`
+UI: `cd frontend && npm ci && npm run build`, then `PATCHQUEST_STATIC_DIR=frontend/dist patchquest serve` (or `npm run dev` with the API on :8000).
 
-### Frontend
+Teams on one host: `docker compose run --rm api patchquest admin init ...` then `docker compose up -d --scale worker=3`
+([deployment](docs/deployment.md)).
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## How a run works
 
-Open http://localhost:5173. The status banner confirms backend connectivity.
-
-### First run
-
-1. Enter a local repository path.
-2. Describe a task (e.g. inspect the repo without modifying files).
-3. Choose provider (Mock Demo works without keys), runtime, and memory mode.
-4. Click **Start Mission** and watch the phase rail update live.
-5. Open the final report when the run completes.
-
----
+`created -> running -> completed | failed | cancelled` (plus `queued`, `waiting_approval`, `interrupted`). Twelve phases; the
+change is made in a shadow copy, validated, repaired within a budget, reviewed, security-scanned, and only then promoted
+by policy (or left as a diff for a person). After every phase a checksummed checkpoint is written. Details:
+[docs/runtime.md](docs/runtime.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Configuration
 
-Copy `sample.config.yaml` to `config.yaml` in the directory where you start the backend, or set `PATCHQUEST_CONFIG` to an absolute path.
+`config.yaml` (see `sample.config.yaml`) and environment variables: `PATCHQUEST_DB`, `_HOST`, `_PORT`, `_QUEUE_MODE`,
+`_WORKER_LEASE_SECONDS`, `_STATIC_DIR`, `PATCHQUEST_API_TOKEN`. Provider keys are read from the environment variable named in
+the config, never stored. Per-run overrides are limited to `agent.*` (safety policy cannot be overridden).
 
-```yaml
-models:
-  planner:
-    provider: ollama
-    model: qwen2.5-coder:0.5b
-  coder:
-    provider: openai_compatible
-    base_url: http://localhost:8000/v1
-    model: local-coder
-    api_key_env: LOCAL_LLM_API_KEY   # env var name only — never store keys in config
+## Safety in one paragraph
 
-runtime:
-  default: local
-  docker:
-    image: patchquest-sandbox:latest
+Command risk is decided deterministically from the parsed argv (blocked / automatic / needs a person), commands run with a
+scrubbed environment and in their own process group, secrets are redacted before anything is stored, repository paths are
+restricted, the API is loopback-only and token-protected, tenants are isolated by workspace, and every external write
+needs a recorded human approval. The full model, including what it does **not** guarantee, is in
+[docs/security.md](docs/security.md).
 
-scheduler:
-  enabled: true
-  poll_interval_seconds: 30
+## Repository layout
 
-memory:
-  mode: repo   # off | session | repo | user
-```
+`backend/patchquest/` (see the package table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)), `backend/tests/{unit,integration,e2e,security}`,
+`backend/benchmarks/`, `frontend/src/{design,features,lib,api}`, `docker/sandbox/`, `Dockerfile`, `docker-compose.yml`,
+`docs/` (runtime, events, checkpoints, failure-recovery, replay, approvals, security, workflows, connectors, rl-gym,
+deployment, operations, benchmarks, ADRs, evaluations, engineering audit).
 
-**API keys** are read from environment variables at runtime. Keys are not logged, persisted to SQLite, or sent to the frontend.
-
-### Provider environment variables
-
-| Provider | Variable |
-|----------|----------|
-| OpenAI | `OPENAI_API_KEY` |
-| Anthropic | `ANTHROPIC_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| NVIDIA NIM / Build | `NVIDIA_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-| Brave Search | `BRAVE_SEARCH_API_KEY` |
-| Tavily | `TAVILY_API_KEY` |
-
-NVIDIA uses the Responses API (`/responses`). Get a key at [build.nvidia.com](https://build.nvidia.com). Models include `openai/gpt-oss-120b` and `openai/gpt-oss-20b`.
-
----
-
-## Scheduler (Quest Queue)
-
-Schedule one-shot or recurring runs from the **Queue** page. Each task stores:
-
-- LLM provider and model
-- Runtime mode (`local` or `docker`)
-- Memory mode
-- Timezone (IANA, e.g. `America/Los_Angeles`)
-
-Schedule types: one-shot (ISO datetime), interval (`30m`, `2h`), daily (`09:00`), weekly (`mon,09:00`), cron (requires `croniter`).
-
-Scheduled runs use the same orchestrator path as manual missions. If a selected provider has no configured API key, the run fails with a clear error—there is no silent fallback to mock unless Mock Demo is explicitly selected.
-
----
-
-## Docker sandbox
-
-Build the sandbox image:
+## Tests
 
 ```bash
-docker build -t patchquest-sandbox:latest docker/sandbox
+cd backend && ruff check . && mypy patchquest && pytest -q            # 1,402 tests; see backend/tests/README.md
+cd frontend && npm run typecheck && npm test && npm run build         # 187 tests
 ```
 
-Select **Docker** in the runtime dropdown or set `runtime_mode: docker` on a run or scheduled task.
+## Contributing and security
 
-- Commands run with `--network none` by default
-- Only the workspace is mounted; no SSH or cloud credential paths
-- Memory, CPU, and PID limits are enforced
-- Command risk classification and SecretGuard still apply inside the container
-
-If Docker is unavailable, the runtime status API reports the condition without crashing the app.
-
----
-
-## Example API usage
-
-```bash
-# Health check
-curl http://localhost:8000/api/health
-
-# Create a run
-curl -X POST http://localhost:8000/api/runs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "repo_path": "/path/to/repo",
-    "task": "Summarize architecture in 3 bullets. Do not modify files.",
-    "provider": "mock",
-    "runtime_mode": "local",
-    "memory_mode": "repo"
-  }'
-
-# Stream events (SSE)
-curl -N http://localhost:8000/api/runs/{run_id}/stream
-
-# Final report
-curl http://localhost:8000/api/reports/{run_id}
-```
-
-Full route list: [backend/README.md](backend/README.md)
-
----
-
-## Running tests
-
-```bash
-# Backend (331 tests)
-cd backend
-source .venv/bin/activate
-python -m pytest
-
-# Frontend
-cd frontend
-npm run typecheck
-npm run test
-npm run build
-```
-
-Optional Tree-sitter parsers:
-
-```bash
-pip install -e ".[tree-sitter]"
-```
-
----
-
-## Project structure
-
-```
-PatchQuest/
-├── backend/
-│   ├── patchquest/
-│   │   ├── main.py              # FastAPI entry
-│   │   ├── database.py          # SQLite schema + migrations
-│   │   ├── api/                 # REST routes
-│   │   ├── orchestrator/        # State machine, phases, approvals
-│   │   ├── agents/              # LLM providers and roles
-│   │   ├── tools/               # SecretGuard, command runner, patches
-│   │   ├── memory/              # Indexer, Tree-sitter, code graph
-│   │   ├── search/              # Web search providers
-│   │   ├── calendar/            # Calendar providers
-│   │   ├── scheduler/           # Quest Queue
-│   │   ├── runtime/             # Local + Docker execution
-│   │   └── reports/             # Final report generator
-│   └── tests/
-├── frontend/src/
-│   ├── pages/                   # Mission, Console, Queue, Reports, …
-│   ├── components/              # Shared UI
-│   ├── games/                   # Mini-games during long runs
-│   └── theme/                   # Dark/light design tokens
-├── docker/sandbox/              # Sandbox Dockerfile
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── assets/patchquest.png
-├── sample.config.yaml
-├── CONTRIBUTING.md
-├── SECURITY.md
-└── LICENSE
-```
-
----
-
-## Safety model
-
-**Command risk** (deterministic, no LLM):
-
-| Level | Behavior |
-|-------|----------|
-| `no_risk_auto` | `ls`, `git status`, `grep`, `python --version` — runs immediately |
-| `careful_auto` | `pytest`, `npm test`, `cargo check` — timeout + output cap |
-| `risky_ask` | `npm install`, `git checkout`, `curl` — requires UI approval |
-| `blocked` | `rm -rf /`, `curl\|bash`, `git push --force`, `sudo`, `~/.ssh` — never runs |
-
-**SecretGuard** scans diffs, command output, memory, and reports. It blocks patches that introduce hardcoded secrets and redacts detected values in all outputs.
-
----
-
-## Current limitations
-
-- **Mock provider** returns deterministic placeholder content—connect a real provider for actual inference.
-- **Single-user local tool** — no authentication or multi-tenant isolation.
-- **DuckDuckGo search** returns instant answers only; paid providers give full web results.
-- **Google/Microsoft calendar** require externally obtained OAuth credentials.
-- **Cron scheduling** uses a simple fallback unless `croniter` is installed.
-- **Docker diff application** may require approval before changes are merged back to the host repo.
-
----
-
-## Roadmap
-
-- Kubernetes remote runners
-- GPU benchmark tracking
-- Multi-repo shared memory
-- Plugin system for custom tools and checks
-- Team mode with shared audit trail
-- Automated OAuth flows for Google/Microsoft calendar
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities and secret-handling policy.
-
-## License
-
-MIT — see [LICENSE](LICENSE)
+[CONTRIBUTING.md](CONTRIBUTING.md) - [SECURITY.md](SECURITY.md) (reporting, and the pointer to the threat model) - [MIT License](LICENSE)

@@ -1,51 +1,25 @@
-# Security Policy
+# Security policy
 
 ## Reporting a vulnerability
 
-If you discover a security issue in PatchQuest, please report it responsibly:
-
-1. **Do not** open a public GitHub issue for exploitable vulnerabilities.
-2. Email the maintainer via GitHub ([MrAnayDongre](https://github.com/MrAnayDongre)) with a description, reproduction steps, and impact assessment.
+1. **Do not** open a public issue for an exploitable vulnerability.
+2. Contact the maintainer through GitHub ([MrAnayDongre](https://github.com/MrAnayDongre)) with a description, reproduction steps and impact.
 3. Allow reasonable time for a fix before public disclosure.
 
-## Scope
+## What the design does and does not promise
 
-PatchQuest is designed as a **local, single-user** tool. Security focus areas:
+The threat model, trust boundaries, guarantees and **non-guarantees** are in [docs/security.md](docs/security.md).
+In short: PatchQuest runs model-chosen commands against source trees, so the API is authenticated and loopback-only by
+default, repository paths are restricted, commands go through a deterministic policy gate and a shadow workspace, the
+real repository is written once after validation, tenants are isolated by workspace, and security events are audited.
+It does **not** claim VM-level isolation from Docker, and it is not compliance-certified.
 
-- Command execution and sandbox escape
-- Path traversal outside the workspace
-- Secret leakage in logs, reports, or SQLite
-- Unsafe defaults in command risk classification
-- Docker sandbox isolation
+## Secrets
 
-Out of scope for this project: multi-tenant isolation, network-facing authentication (not implemented by design).
+- API keys come from environment variables; configuration stores variable *names*, never values.
+- Command output, checkpoints, model-call records and reports are secret-redacted before they are stored.
+- API tokens are stored only as SHA-256 hashes and shown once.
+- Workflows and connectors refer to secrets by reference; literal secrets in a definition are rejected.
 
-## Secret handling
-
-PatchQuest follows these rules:
-
-- API keys are read from **environment variables** only.
-- Config files store env var **names**, never key values.
-- SecretGuard scans diffs, command output, memory records, and reports.
-- Detected secrets are redacted in persisted and streamed output.
-
-**Do not** commit:
-
-- `.env` files
-- Real API keys (`sk-…`, `nvapi-…`, `gsk_…`, etc.)
-- Private keys or OAuth token JSON
-- Local `config.yaml` with embedded credentials
-
-Test fixtures use obviously fake key patterns (e.g. `sk-abc123…`) for detection tests only.
-
-## Safe usage recommendations
-
-- Run PatchQuest on trusted machines with trusted repositories.
-- Use Docker runtime for untrusted code when Docker is available.
-- Review the Safety Queue before approving risky commands.
-- Keep provider API keys out of task descriptions and repo files.
-- Treat mock mode as deterministic demo/testing—not a security boundary.
-
-## Dependencies
-
-Report third-party dependency vulnerabilities through the normal GitHub issue tracker once confirmed they affect PatchQuest's usage path.
+Never commit `.env` files, real keys (`sk-…`, `ghp_…`, `nvapi-…`), private keys, OAuth token files, or a `config.yaml`
+with embedded credentials. Test fixtures use obviously fake key patterns for detection tests only.
