@@ -148,3 +148,63 @@ class TestRecovery:
         assert ("run_interrupted", "testing") in [(e["type"], e["phase"]) for e in ev]
         assert ev[0]["type"] == "run_state_changed"  # the typed transition is recorded first
         assert recover_interrupted_runs() == 0  # idempotent
+
+
+class TestApprovalEndpoints:
+    @staticmethod
+    def pending(run_id="api-run", command="touch x.txt", effect=None):
+        from patchquest.domain.effects import SideEffect
+        from patchquest.persistence import approvals
+        from tests.support.db import insert_run
+
+        insert_run(run_id)
+        with get_db() as conn:
+            return approvals.request(conn, run_id, kind="command", reason="r", command=command,
+                                     side_effect=effect or SideEffect.WORKSPACE_WRITE, timeout_s=60)
+
+    @pytest.mark.asyncio
+    async def test_list_then_decide(self):
+        aid = self.pending()
+        async with client() as c:
+            listed = (await c.get("/api/runs/api-run/approvals")).json()
+            assert [a["id"] for a in listed] == [aid] and listed[0]["side_effect"] == "WORKSPACE_WRITE"
+            r = await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "APPROVE_FOR_RUN", "note": "ok"})
+            assert r.status_code == 200 and r.json() == {"status": "approved", "decision": "APPROVE_FOR_RUN"}
+            assert (await c.get("/api/runs/api-run/approvals")).json() == []
+
+    @pytest.mark.asyncio
+    async def test_errors_have_stable_codes_and_statuses(self):
+        from patchquest.domain.effects import SideEffect
+
+        aid = self.pending()
+        async with client() as c:
+            assert (await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "MAYBE"})).status_code == 422
+            r = await c.post("/api/runs/api-run/approvals/nope", json={"decision": "DENY"})
+            assert r.status_code == 404 and r.json()["detail"]["code"] == "approval_not_found"
+            r = await c.post("/api/runs/missing/approvals/x", json={"decision": "DENY"})
+            assert r.status_code == 404
+            await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "DENY"})
+            r = await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "APPROVE_ONCE"})
+            assert r.status_code == 409 and r.json()["detail"]["code"] == "approval_already_decided"
+            risky = self.pending(command="curl http://x", effect=SideEffect.EXTERNAL_WRITE)
+            r = await c.post(f"/api/runs/api-run/approvals/{risky}", json={"decision": "APPROVE_FOR_RUN"})
+            assert r.status_code == 422 and r.json()["detail"]["code"] == "decision_not_allowed"
+
+    @pytest.mark.asyncio
+    async def test_legacy_yes_no_endpoints_still_work(self):
+        a, b = self.pending(), self.pending()
+        async with client() as c:
+            assert (await c.post("/api/runs/api-run/approve", json={"approval_id": a, "approved": True})).json()["status"] == "approved"
+            assert (await c.post("/api/runs/api-run/reject", json={"approval_id": b, "approved": True})).json()["status"] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_approvals_require_the_token_when_one_is_configured(self, monkeypatch):
+        cfg = AppConfig()
+        set_config(cfg)
+        monkeypatch.setenv(cfg.api_token_env, "s3cret-token-value")
+        aid = self.pending()
+        async with client() as c:
+            assert (await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "APPROVE_ONCE"})).status_code == 401
+            ok = await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "DENY"},
+                              headers={"Authorization": "Bearer s3cret-token-value"})
+            assert ok.status_code == 200

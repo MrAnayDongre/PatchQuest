@@ -23,13 +23,15 @@ from patchquest import __version__
 from patchquest.config import config_overrides, get_config, validate_overrides
 from patchquest.database import get_db, now_iso
 from patchquest.domain import budget
+from patchquest.domain.approvals import STATUS_FOR, ApprovalStatus, Decision
+from patchquest.domain.effects import GRANTABLE, SideEffect
 from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
 from patchquest.domain.runs import IllegalTransition, RunStatus
 from patchquest.orchestrator import snapshot
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
-from patchquest.persistence import checkpoints, ledger
+from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
 from patchquest.tools.secret_guard import redact_secrets
 
@@ -148,8 +150,9 @@ class RunStateMachine:
         )
         self.phase_statuses: dict[Phase, PhaseStatus] = {p: PhaseStatus.PENDING for p in Phase}
         self._approval_events: dict[str, asyncio.Event] = {}
-        self._approval_results: dict[str, bool] = {}
+        self._approval_results: dict[str, approvals.Outcome] = {}
         self._workspace: ShadowWorkspace | None = None  # created on demand
+        self._ws_lock = asyncio.Lock()
         self._blocked = False
         self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
@@ -324,77 +327,118 @@ class RunStateMachine:
 
     # --------------------------------------------------------------- workspace
     async def _ws(self) -> ShadowWorkspace:
-        """Create (once) the shadow workspace all mutation and validation runs inside."""
-        if self._workspace is None:
-            from patchquest.runtime.workspace import ShadowWorkspace
+        """Create (once) the shadow workspace all mutation and validation runs inside. Concurrent callers
+        wait for the one creation rather than each wiping and rebuilding the directory."""
+        async with self._ws_lock:
+            if self._workspace is None:
+                from patchquest.runtime.workspace import ShadowWorkspace
 
-            ws = ShadowWorkspace(self.run_id, self.ctx.repo_path)
-            await asyncio.to_thread(ws.create)
-            if self.replay_base:
-                await asyncio.to_thread(ws.restore, self.replay_base)
-            self._workspace = ws
-            self.ctx.workspace_path = str(ws.path)
-            await self._emit("workspace_created", message="Created isolated workspace for validation")
-        return self._workspace
+                ws = ShadowWorkspace(self.run_id, self.ctx.repo_path)
+                await asyncio.to_thread(ws.create)
+                if self.replay_base:
+                    await asyncio.to_thread(ws.restore, self.replay_base)
+                self._workspace = ws
+                self.ctx.workspace_path = str(ws.path)
+                await self._emit("workspace_created", message="Created isolated workspace for validation")
+            return self._workspace
 
     # -------------------------------------------------------- command + approval
-    async def _request_approval(self, kind: str, command: str | None, reason: str) -> bool:
-        from patchquest.orchestrator.approvals import create_approval
-
-        approval_id = await asyncio.to_thread(create_approval, self.run_id, kind, command, reason)
+    async def _request_approval(self, kind: str, command: str | None, reason: str, *,
+                                side_effect: SideEffect = SideEffect.UNKNOWN, risk: str | None = None) -> approvals.Outcome:
+        """Ask a human and wait. The request is a durable row; the wait is bounded and a timeout is a denial."""
+        timeout = get_config().safety.approval_timeout_seconds
+        with get_db() as conn:
+            approval_id = approvals.request(conn, self.run_id, kind=kind, reason=reason, command=command,
+                                            side_effect=side_effect, risk=risk, phase=self._current_phase, timeout_s=timeout)
         event = asyncio.Event()
         self._approval_events[approval_id] = event  # registered before announcing, so no lost wake-up
         safe_command = redact_secrets(command) if command else None
         await self._emit("approval_requested", message=reason, payload={
-            "approval_id": approval_id, "type": kind, "command": safe_command, "reason": reason})
+            "approval_id": approval_id, "type": kind, "command": safe_command, "reason": reason,
+            "side_effect": side_effect.value, "risk": risk, "expires_in_s": timeout,
+            "grantable": side_effect in GRANTABLE and kind == "command"})
 
-        timeout = get_config().safety.approval_timeout_seconds
         self._move(RunStatus.WAITING_APPROVAL, f"waiting for a decision: {reason}")
+        outcome: approvals.Outcome | None = None
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
-            approved = self._approval_results.get(approval_id, False) and not self._cancelled.is_set()
+            outcome = self._approval_results.pop(approval_id, None)
         except TimeoutError:
-            approved = False
-            with get_db() as conn:
-                conn.execute("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'",
-                             (now_iso(), approval_id))
-            await self._emit("approval_expired", message=f"No response within {timeout}s; treated as denied",
-                             payload={"approval_id": approval_id})
+            with get_db() as conn:  # closed before emitting: _emit writes through its own connection
+                expired = approvals.expire(conn, approval_id)
+                outcome = None if expired else self._outcome_from_db(conn, approval_id)  # a decision landed in the same instant: it stands
+            if expired:
+                await self._emit("approval_expired", message=f"No response within {timeout}s; treated as denied",
+                                 payload={"approval_id": approval_id})
         finally:
             self._approval_events.pop(approval_id, None)
             if not self._cancelled.is_set():
                 self._move(RunStatus.RUNNING, "decision received")
-        self.ctx.approvals.append({"id": approval_id, "type": kind, "command": safe_command, "approved": approved})
-        return approved
+        if outcome is None or self._cancelled.is_set():
+            outcome = approvals.Outcome(approval_id, Decision.DENY, ApprovalStatus.DENIED, command)
+        if outcome.decision is Decision.CANCEL_RUN:
+            self.cancel()
+        self.ctx.approvals.append({"id": approval_id, "type": kind, "command": safe_command,
+                                   "approved": outcome.approved, "decision": outcome.decision.value})
+        return outcome
+
+    @staticmethod
+    def _outcome_from_db(conn: Any, approval_id: str) -> approvals.Outcome | None:
+        row = conn.execute("SELECT decision, status, command, modified_command FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+        if row is None or not row["decision"]:
+            return None
+        decision = Decision(row["decision"])
+        return approvals.Outcome(approval_id, decision, ApprovalStatus(row["status"]),
+                                 row["modified_command"] if decision is Decision.MODIFY else row["command"])
 
     async def _exec(self, command: str) -> dict[str, Any]:
         """Run ``command`` in the workspace through the policy gate. Never raises."""
+        from patchquest.tools.command_effects import effect_of
         from patchquest.tools.command_risk import RiskLevel, classify
 
         self._enforce(budget.BudgetKind.COMMANDS)
         ws = await self._ws()
         decision = classify(command, str(ws.path))
+        effect = effect_of(decision)
         safe_cmd = redact_secrets(command)
         approved = decision.auto
 
         if decision.level == RiskLevel.BLOCKED:
             await self._emit("command_blocked", message=f"Blocked: {decision.reason}",
-                             payload={"command": safe_cmd, "reason": decision.reason})
+                             payload={"command": safe_cmd, "reason": decision.reason, "side_effect": effect.value})
             result = {"success": False, "returncode": -2, "stdout": "", "stderr": f"Blocked: {decision.reason}",
                       "blocked": True}
         else:
             if decision.level == RiskLevel.RISKY_ASK:
-                approved = await self._request_approval("command", command, decision.reason)
+                with get_db() as conn:
+                    remembered = approvals.has_grant(conn, self.run_id, command)
+                if remembered:
+                    approved = True
+                    await self._emit("approval_reused", message=f"Approved earlier in this run: {safe_cmd}",
+                                     payload={"command": safe_cmd, "side_effect": effect.value})
+                else:
+                    outcome = await self._request_approval("command", command, decision.reason, side_effect=effect,
+                                                           risk=decision.level.value)
+                    approved = outcome.approved
+                    if approved and outcome.decision is Decision.MODIFY and outcome.command:
+                        # The approver wrote this command; it still may not be one the policy forbids outright.
+                        command, safe_cmd = outcome.command, redact_secrets(outcome.command)
+                        if classify(command, str(ws.path)).level == RiskLevel.BLOCKED:
+                            approved = False
+                            await self._emit("command_blocked", message="The modified command is blocked by policy",
+                                             payload={"command": safe_cmd})
             if not approved:
                 await self._emit("command_denied", message="Command not approved", payload={"command": safe_cmd})
                 result = {"success": False, "returncode": -3, "stdout": "", "stderr": "Command was not approved",
                           "denied": True}
             else:
-                await self._emit("command_started", message=safe_cmd, payload={"command": safe_cmd})
+                await self._emit("command_started", message=safe_cmd,
+                                 payload={"command": safe_cmd, "side_effect": effect.value})
                 result = await asyncio.to_thread(self._run_in_runtime, command, str(ws.path), True)
                 await self._emit("command_executed", message=f"{safe_cmd} -> exit {result.get('returncode')}", payload={
                     "command": safe_cmd, "returncode": result.get("returncode"), "risk": decision.level.value,
-                    "duration_s": result.get("duration_s"), "timed_out": result.get("timed_out", False)})
+                    "side_effect": effect.value, "duration_s": result.get("duration_s"),
+                    "timed_out": result.get("timed_out", False)})
         entry = {"command": command, **result}
         self.ctx.commands_run.append({"command": command, "result": result})
         return entry
@@ -726,7 +770,8 @@ class RunStateMachine:
             return
         if policy != "always" and not promotable:
             why = f"validation verdict '{ctx.verdict}'" + (" and reviewer recommended changes" if rejected_by_review else "")
-            if not await self._request_approval("promote_patch", None, f"Apply patch to the repository despite {why}?"):
+            if not (await self._request_approval("promote_patch", None, f"Apply patch to the repository despite {why}?",
+                                                 side_effect=SideEffect.REPOSITORY_WRITE, risk="repository_write")).approved:
                 ctx.outcome = "rejected"
                 await self._emit("patch_rejected", phase="final_report", message=f"Patch not applied ({why})")
                 return
@@ -828,8 +873,13 @@ class RunStateMachine:
         }
         await event_bus.emit(self.run_id, event)
 
-    async def resolve_approval(self, approval_id: str, approved: bool) -> None:
-        self._approval_results[approval_id] = approved
+    async def resolve_approval(self, approval_id: str, decision: approvals.Outcome | Decision | bool) -> None:
+        """Wake the phase waiting on ``approval_id``. A bare bool is accepted for callers that only know yes/no."""
+        if isinstance(decision, bool):
+            decision = Decision.APPROVE_ONCE if decision else Decision.DENY
+        if isinstance(decision, Decision):
+            decision = approvals.Outcome(approval_id, decision, STATUS_FOR[decision], None)
         evt = self._approval_events.get(approval_id)
-        if evt:
+        if evt:  # nothing waits on a stale or foreign id, and nothing is stored for one
+            self._approval_results[approval_id] = decision
             evt.set()

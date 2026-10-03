@@ -52,18 +52,41 @@ def _fmt_event(e: dict) -> str | None:
 
 
 async def _approve_interactively(svc, run_id: str, event: dict, no_input: bool) -> None:
+    from patchquest.domain.approvals import ApprovalError, Decision
+
     payload = event.get("payload") or {}
     aid = payload.get("approval_id")
     if not aid:
         return
     if no_input or not sys.stdin.isatty():
-        await svc.approve(run_id, aid, False, "non-interactive: denied")
+        await _decide_quietly(svc, run_id, aid, Decision.DENY, "non-interactive: denied")
         return
     print(f"\n  APPROVAL NEEDED ({payload.get('type')}): {payload.get('reason')}", file=sys.stderr)
+    print(f"  effect: {payload.get('side_effect')}   expires in {payload.get('expires_in_s')}s", file=sys.stderr)
     if payload.get("command"):
         print(f"  command: {payload['command']}", file=sys.stderr)
-    answer = await asyncio.to_thread(input, "  approve? [y/N] ")
-    await svc.approve(run_id, aid, answer.strip().lower() in ("y", "yes"), "cli")
+    options = "[y]es once" + (", [a]lways this run" if payload.get("grantable") else "") + (
+        ", [m]odify" if payload.get("type") == "command" else "") + ", [n]o, [c]ancel run"
+    answer = (await asyncio.to_thread(input, f"  {options}: ")).strip().lower()
+    modified = None
+    if answer in ("m", "modify"):
+        modified = (await asyncio.to_thread(input, "  run instead: ")).strip()
+    decision = {"y": Decision.APPROVE_ONCE, "yes": Decision.APPROVE_ONCE, "a": Decision.APPROVE_FOR_RUN,
+                "always": Decision.APPROVE_FOR_RUN, "m": Decision.MODIFY, "modify": Decision.MODIFY,
+                "c": Decision.CANCEL_RUN, "cancel": Decision.CANCEL_RUN}.get(answer, Decision.DENY)
+    try:
+        await svc.decide(run_id, aid, decision, actor="cli", modified_command=modified)
+    except ApprovalError as exc:
+        print(f"  not recorded: {exc}", file=sys.stderr)
+
+
+async def _decide_quietly(svc, run_id: str, approval_id: str, decision, note: str) -> None:
+    from patchquest.domain.approvals import ApprovalError
+
+    try:
+        await svc.decide(run_id, approval_id, decision, actor="cli", note=note)
+    except ApprovalError:  # already decided or expired: nothing left to deny
+        pass
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -355,9 +378,10 @@ def _cmd_approve(args: argparse.Namespace) -> int:
 
     cfg = get_config()
     token = os.environ.get(cfg.api_token_env, "")
-    url = f"{args.server.rstrip('/')}/api/runs/{args.run_id}/approve"
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    r = httpx.post(url, json={"approval_id": args.approval_id, "approved": not args.deny}, headers=headers, timeout=10)
+    decision = args.decision or ("DENY" if args.deny else "APPROVE_ONCE")
+    url = f"{args.server.rstrip('/')}/api/runs/{args.run_id}/approvals/{args.approval_id}"
+    r = httpx.post(url, json={"decision": decision, "modified_command": args.command}, headers=headers, timeout=10)
     if r.status_code != 200:
         print(f"error: server said {r.status_code}: {r.text}", file=sys.stderr)
         return EXIT_FAILED
@@ -558,6 +582,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("run_id")
     a.add_argument("approval_id")
     a.add_argument("--deny", action="store_true")
+    a.add_argument("--decision", choices=["APPROVE_ONCE", "APPROVE_FOR_RUN", "DENY", "MODIFY", "CANCEL_RUN"])
+    a.add_argument("--command", help="with --decision MODIFY: the command to run instead")
     a.add_argument("--server", default="http://127.0.0.1:8000")
     pr = sub.add_parser("providers", help="list model providers and whether they are configured")
     pr.add_argument("--json", action="store_true")

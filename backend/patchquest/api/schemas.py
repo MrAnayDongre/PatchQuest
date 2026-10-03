@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from patchquest.domain.approvals import Decision
+
 
 class CreateRunRequest(BaseModel):
     repo_path: str
@@ -19,6 +21,12 @@ class CreateRunRequest(BaseModel):
     interface_mode: str | None = None
     allow_network: bool = False
     dry_run: bool = False
+
+
+class ApprovalDecision(BaseModel):
+    decision: Decision
+    note: str | None = None
+    modified_command: str | None = None
 
 
 class RunResponse(BaseModel):

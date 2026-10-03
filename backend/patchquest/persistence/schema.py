@@ -83,10 +83,31 @@ def _lineage(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id) WHERE parent_run_id IS NOT NULL")
 
 
+def _approvals(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "approvals", {
+        "side_effect": "TEXT", "risk": "TEXT", "phase": "TEXT", "requested_by": "TEXT", "expires_at": "TEXT",
+        "decision": "TEXT", "decided_by": "TEXT", "modified_command": "TEXT", "resources_json": "TEXT",
+    })
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS approval_grants (
+            run_id TEXT NOT NULL REFERENCES runs(id),
+            signature TEXT NOT NULL,
+            side_effect TEXT NOT NULL,
+            approval_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_approvals_run_status ON approvals(run_id, status);
+    """)
+    # Older rows said 'rejected'; the vocabulary is now 'denied'.
+    conn.execute("UPDATE approvals SET status = 'denied' WHERE status = 'rejected'")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
     Migration(3, "checkpoints", _checkpoints),
     Migration(4, "run failure kind", _failure_kind),
     Migration(5, "run lineage and per-run overrides", _lineage),
+    Migration(6, "approval decisions, expiry and grants", _approvals),
 ]

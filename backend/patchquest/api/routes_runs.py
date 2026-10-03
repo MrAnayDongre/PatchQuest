@@ -8,9 +8,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from patchquest.api.schemas import ApprovalAction, CreateRunRequest, RunEventResponse, RunResponse
+from patchquest.api.schemas import ApprovalAction, ApprovalDecision, CreateRunRequest, RunEventResponse, RunResponse
 from patchquest.application import get_service
 from patchquest.application.service import RunNotActive, RunNotFound
+from patchquest.domain.approvals import ApprovalError, Decision
 from patchquest.security import RepoPathError
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -81,16 +82,44 @@ async def stream_events(run_id: str, after_id: int = Query(0, ge=0)) -> EventSou
     return EventSourceResponse(generate())
 
 
+_APPROVAL_STATUS = {"approval_not_found": 404, "approval_already_decided": 409, "decision_not_allowed": 422}
+
+
+async def _decide(run_id: str, approval_id: str, body: ApprovalDecision) -> dict[str, Any]:
+    try:
+        outcome = await get_service().decide(run_id, approval_id, body.decision, note=body.note,
+                                             modified_command=body.modified_command)
+    except RunNotFound:
+        raise HTTPException(404, "Run not found") from None
+    except ApprovalError as exc:
+        raise HTTPException(_APPROVAL_STATUS.get(exc.code, 400), {"code": exc.code, "message": str(exc)}) from None
+    return {"status": outcome.status.value, "decision": outcome.decision.value}
+
+
+@router.get("/{run_id}/approvals")
+async def pending_approvals(run_id: str) -> list[dict[str, Any]]:
+    service = get_service()
+    try:
+        service.get_run(run_id)
+    except RunNotFound:
+        raise HTTPException(404, "Run not found") from None
+    return service.pending_approvals(run_id)
+
+
+@router.post("/{run_id}/approvals/{approval_id}")
+async def decide_approval(run_id: str, approval_id: str, body: ApprovalDecision) -> dict[str, Any]:
+    return await _decide(run_id, approval_id, body)
+
+
 @router.post("/{run_id}/approve")
-async def approve_action(run_id: str, action: ApprovalAction) -> dict[str, str]:
-    await get_service().approve(run_id, action.approval_id, action.approved, action.note)
-    return {"status": "ok"}
+async def approve_action(run_id: str, action: ApprovalAction) -> dict[str, Any]:
+    decision = Decision.APPROVE_ONCE if action.approved else Decision.DENY
+    return await _decide(run_id, action.approval_id, ApprovalDecision(decision=decision, note=action.note))
 
 
 @router.post("/{run_id}/reject")
-async def reject_action(run_id: str, action: ApprovalAction) -> dict[str, str]:
-    action.approved = False
-    return await approve_action(run_id, action)
+async def reject_action(run_id: str, action: ApprovalAction) -> dict[str, Any]:
+    return await _decide(run_id, action.approval_id, ApprovalDecision(decision=Decision.DENY, note=action.note))
 
 
 @router.post("/{run_id}/cancel")

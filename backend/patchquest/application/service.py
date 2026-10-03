@@ -17,10 +17,11 @@ from typing import Any
 from patchquest.agents.providers_recorded import RecordedProvider, session_name
 from patchquest.config import validate_overrides
 from patchquest.database import get_db, insert_event, now_iso
+from patchquest.domain.approvals import Decision
 from patchquest.domain.runs import RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
-from patchquest.persistence import checkpoints, ledger
+from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
 from patchquest.runtime import lineage
 from patchquest.runtime.fingerprint import Drift, DriftReport
@@ -304,23 +305,26 @@ class TaskService:
         return run_id in self._machines
 
     # ---------------------------------------------------------------- approvals
-    async def approve(self, run_id: str, approval_id: str, approved: bool, note: str | None = None) -> None:
+    async def decide(self, run_id: str, approval_id: str, decision: Decision, *, actor: str = "user",
+                     note: str | None = None, modified_command: str | None = None) -> approvals.Outcome:
+        """Record a decision and wake the run waiting for it. Raises ``ApprovalError`` subclasses (stable
+        ``code`` attribute) when the decision cannot stand: unknown, already decided, expired, not allowed."""
+        self.get_run(run_id)
         with get_db() as conn:
-            conn.execute(
-                "UPDATE approvals SET status = ?, note = ?, resolved_at = ? WHERE id = ? AND run_id = ? AND status = 'pending'",
-                ("approved" if approved else "rejected", note, now_iso(), approval_id, run_id),
-            )
-            insert_event(conn, run_id, "permission_approved" if approved else "permission_rejected",
-                         message=f"Approval {approval_id}: {approved}")
+            outcome = approvals.decide(conn, run_id, approval_id, decision, actor=actor, note=note,
+                                       modified_command=modified_command)
         machine = self._machines.get(run_id)
         if machine:
-            await machine.resolve_approval(approval_id, approved)
+            await machine.resolve_approval(approval_id, outcome)
+        return outcome
+
+    async def approve(self, run_id: str, approval_id: str, approved: bool, note: str | None = None) -> None:
+        """Yes/no shorthand for ``decide``."""
+        await self.decide(run_id, approval_id, Decision.APPROVE_ONCE if approved else Decision.DENY, note=note)
 
     def pending_approvals(self, run_id: str) -> list[dict[str, Any]]:
         with get_db() as conn:
-            rows = conn.execute("SELECT * FROM approvals WHERE run_id = ? AND status = 'pending' ORDER BY created_at",
-                                (run_id,)).fetchall()
-        return [_row(r) for r in rows]
+            return approvals.pending(conn, run_id)
 
     # ------------------------------------------------------------------ inspect
     def get_run(self, run_id: str) -> dict[str, Any]:
