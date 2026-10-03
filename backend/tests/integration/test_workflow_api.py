@@ -135,3 +135,14 @@ async def test_start_errors_templates_and_cancel(tmp_path):
         assert (await c.post(f"/api/workflows/runs/{run_id}/cancel")).json() == {"status": "cancelled"}
         assert (await c.get(f"/api/workflows/runs/{run_id}")).json()["status"] == "cancelled"
         assert (await c.get("/api/workflows/wf_nope")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_palette_endpoints_describe_actions_and_templates():
+    async with client() as c:
+        actions = {a["name"]: a for a in (await c.get("/api/workflows/actions")).json()}
+        assert actions["notify.log"]["requires_approval"] is False and actions["notify.log"]["connector"] is None
+        assert actions["github.comment"]["requires_approval"] is True and actions["github.comment"]["connector"] == "github"
+        one = (await c.get("/api/workflows/templates/issue-to-proposal")).json()
+        assert one["requires"] == ["github"] and one["definition"]["name"] == "issue-to-proposal"
+        assert (await c.get("/api/workflows/templates/nope")).status_code == 404

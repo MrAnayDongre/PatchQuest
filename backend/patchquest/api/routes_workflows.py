@@ -117,6 +117,24 @@ async def templates(principal: CurrentPrincipal) -> list[dict[str, Any]]:
             for name, t in sorted(TEMPLATES.items())]
 
 
+@router.get("/actions")
+async def actions(principal: CurrentPrincipal) -> list[dict[str, Any]]:
+    """The action catalogue for a node palette: name, declared side effect, whether a human gate is required, connector."""
+    from patchquest.domain.workflows import REQUIRES_APPROVAL_EFFECTS
+    from patchquest.workflows.catalog import ACTIONS
+
+    return [{"name": name, "side_effect": info.side_effect.value, "idempotent": info.idempotent,
+             "requires_approval": info.side_effect in REQUIRES_APPROVAL_EFFECTS,
+             "connector": None if name.startswith("notify.") else name.split(".", 1)[0]} for name, info in sorted(ACTIONS.items())]
+
+
+@router.get("/templates/{name}")
+async def template(name: str, principal: CurrentPrincipal) -> dict[str, Any]:
+    if name not in TEMPLATES:
+        raise HTTPException(404, "Not found")
+    return {"definition": TEMPLATES[name], "requires": requires(name)}
+
+
 @router.post("/validate")
 async def validate_definition(body: DefinitionBody, principal: CurrentPrincipal) -> dict[str, Any]:
     try:
