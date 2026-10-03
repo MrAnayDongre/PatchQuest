@@ -43,8 +43,9 @@ from patchquest.agents.structured_outputs import (
 from patchquest.config import get_config
 from patchquest.context import build_context, render_context
 from patchquest.database import get_db, now_iso
-from patchquest.domain.failures import FailureKind, PatchQuestError, classify
+from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
 from patchquest.orchestrator.run_context import RunContext
+from patchquest.providers import failover, health
 from patchquest.providers.catalog import PROVIDER_CATALOG
 from patchquest.runtime import retry
 from patchquest.tools.secret_guard import redact_secrets
@@ -70,25 +71,30 @@ class Completion:
     model: str
 
 
+def _model_for(provider_name: str, model: str | None, base_url: str | None):
+    """``(provider, ModelConfig)`` for an explicit provider choice, from the catalogue defaults."""
+    catalog = next((p for p in PROVIDER_CATALOG if p["name"] == provider_name), None)
+    nvidia = provider_name == "nvidia"
+    return get_provider(provider_name), ModelConfig(
+        provider=provider_name,
+        model=model or (catalog["default_model"] if catalog else ""),
+        base_url=base_url or (catalog.get("base_url") if catalog else None),
+        api_key_env=catalog.get("api_key_env") if catalog else None,
+        max_tokens=4096 if nvidia else 2048,
+        temperature=1.0 if nvidia else 0.2,
+        top_p=1.0 if nvidia else None,
+        timeout_seconds=float((catalog or {}).get("timeout_seconds", 60)),
+        capability_hints=dict((catalog or {}).get("capabilities", {})),
+    )
+
+
 def _resolve_model(role_name: str, ctx: RunContext | None):
     """Return ``(provider, ModelConfig)`` for a role, honouring the run's provider choice."""
     run_provider = ctx.provider if ctx else None
     run_model = ctx.model if ctx else None
 
     if run_provider and run_provider != "mock":
-        catalog = next((p for p in PROVIDER_CATALOG if p["name"] == run_provider), None)
-        nvidia = run_provider == "nvidia"
-        return get_provider(run_provider), ModelConfig(
-            provider=run_provider,
-            model=run_model or (catalog["default_model"] if catalog else ""),
-            base_url=(ctx.base_url if ctx and ctx.base_url else None) or (catalog.get("base_url") if catalog else None),
-            api_key_env=catalog.get("api_key_env") if catalog else None,
-            max_tokens=4096 if nvidia else 2048,
-            temperature=1.0 if nvidia else 0.2,
-            top_p=1.0 if nvidia else None,
-            timeout_seconds=float((catalog or {}).get("timeout_seconds", 60)),
-            capability_hints=dict((catalog or {}).get("capabilities", {})),
-        )
+        return _model_for(run_provider, run_model, ctx.base_url if ctx else None)
 
     config = get_config()
     profile = getattr(config.models, role_name, config.models.intake)
@@ -161,16 +167,47 @@ def _record(ctx: RunContext | None, role: str, provider: str, model: str, messag
         return None
 
 
+def _failover_targets(ctx: RunContext | None) -> list[tuple[Any, ModelConfig]]:
+    return [_model_for(t.provider, t.model, t.base_url) for t in get_config().agent.failover.chain]
+
+
 async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: RunContext | None,
                     schema: type[BaseModel] | None = None,
                     extra_messages: list[dict[str, str]] | None = None,
                     constrain: bool = True, degraded_note: str | None = None) -> Completion:
-    provider, model_config = _resolve_model(role_name, ctx)
+    """One model call. Tries the run's provider (with retries), then each configured failover target
+    that the failover policy allows; a refused switch is recorded and the original error stands."""
+    targets = [_resolve_model(role_name, ctx), *_failover_targets(ctx)]
+    _charge_budget(ctx)
+    for index, (provider, model_config) in enumerate(targets):
+        try:
+            return await _complete_on(provider, model_config, role_name, system_prompt, user_content, ctx, schema,
+                                      extra_messages, constrain, degraded_note)
+        except PatchQuestError as exc:
+            if index + 1 >= len(targets):
+                raise
+            next_provider, next_config = targets[index + 1]
+            verdict = failover.check(
+                exc.kind, model_config, provider.capabilities(model_config), next_config,
+                next_provider.capabilities(next_config), get_config().agent.failover,
+                constrained_output_used=schema is not None and constrain)
+            if ctx and ctx.event_sink:
+                await ctx.event_sink("provider_failover" if verdict.allowed else "provider_failover_refused", {
+                    "role": role_name, "from": f"{model_config.provider}/{model_config.model}",
+                    "to": f"{next_config.provider}/{next_config.model}", "reason": verdict.reason,
+                    "failure": Failure(exc.kind, exc.detail).to_payload()})
+            if not verdict.allowed:
+                raise
+    raise RuntimeError("unreachable: the last target either returns or raises")  # pragma: no cover
 
+
+async def _complete_on(provider: Any, model_config: ModelConfig, role_name: str, system_prompt: str,
+                       user_content: str, ctx: RunContext | None, schema: type[BaseModel] | None,
+                       extra_messages: list[dict[str, str]] | None, constrain: bool,
+                       degraded_note: str | None) -> Completion:
     valid, err = provider.validate_config(model_config)
     if not valid:
         raise PatchQuestError(FailureKind.ENVIRONMENT_FAILURE, f"Provider '{model_config.provider}' configuration error: {err}")
-    _charge_budget(ctx)
 
     limit = await context_limit(model_config)
     if limit:
@@ -203,6 +240,7 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
                     "call_id": call_id, "role": role_name, "provider": model_config.provider,
                     "model": model_config.model, "duration_ms": int((time.monotonic() - t0) * 1000),
                     "usage": response.usage, "degraded": response.degraded, "attempts": response.attempts})
+            health.record_success(model_config, int((time.monotonic() - t0) * 1000))
             return Completion(response.content or "", response, model_config.provider, model_config.model)
         except asyncio.CancelledError:
             raise
@@ -240,6 +278,7 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
     await asyncio.to_thread(_record, ctx, role_name, model_config.provider, model_config.model, messages,
                             started_at, int((time.monotonic() - t0) * 1000), None, "error", message)
     failure = classify(last)
+    health.record_failure(model_config, failure.kind)
     raise PatchQuestError(failure.kind, f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}",
                           retry_after=failure.retry_after) from last
 

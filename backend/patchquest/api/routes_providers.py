@@ -18,6 +18,20 @@ async def list_providers() -> list[ProviderInfo]:
     return [ProviderInfo(**p) for p in PROVIDER_CATALOG]
 
 
+@router.get("/engines")
+async def engines() -> list[dict]:
+    from patchquest.providers.engines import engine_report
+
+    return await engine_report()
+
+
+@router.get("/health")
+async def provider_health() -> list[dict]:
+    from patchquest.providers import health
+
+    return health.snapshot()
+
+
 @router.get("/status", response_model=list[ProviderStatus])
 async def provider_status() -> list[ProviderStatus]:
     results: list[ProviderStatus] = []

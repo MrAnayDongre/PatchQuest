@@ -47,8 +47,8 @@ PROVIDER_CATALOG: list[dict[str, Any]] = [
         "display_name": "Anthropic",
         "api_key_env": "ANTHROPIC_API_KEY",
         "base_url": "https://api.anthropic.com",
-        "default_model": "claude-3-haiku-20240307",
-        "models": ["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
+        "default_model": "claude-haiku-4-5-20251001",
+        "models": ["claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"],
     },
     {
         "name": "ollama",

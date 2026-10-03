@@ -12,6 +12,7 @@ from patchquest.agents import roles as _roles
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.config import AppConfig, set_config
 from patchquest.database import init_db, set_db_path
+from patchquest.providers import health as _health
 from patchquest.runtime import retry as _retry
 
 
@@ -25,6 +26,7 @@ def isolated_runtime(tmp_path_factory, tmp_path, monkeypatch):
     monkeypatch.setattr(_retry, "DEFAULT_POLICY", _retry.RetryPolicy(max_attempts=3, base_delay_s=0, max_delay_s=0))
     for var in ("PATCHQUEST_API_TOKEN", "PATCHQUEST_DB", "PATCHQUEST_CONFIG"):
         monkeypatch.delenv(var, raising=False)
+    _health.reset()
     _poc._UNSUPPORTED.clear()
     _roles._CONSTRAINED_UNRELIABLE.clear()
     ScriptedProvider.scripts.clear()

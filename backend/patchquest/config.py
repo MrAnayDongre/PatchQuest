@@ -152,6 +152,25 @@ class RuntimeConfig(BaseModel):
     docker: DockerConfig = Field(default_factory=DockerConfig)
 
 
+class FailoverTarget(BaseModel):
+    provider: str
+    model: str | None = None
+    base_url: str | None = None
+
+
+class FailoverConfig(BaseModel):
+    """When the model provider is down, rate limited or timing out, try these in order.
+
+    Failover never silently changes what the user agreed to: it will not send data off this machine
+    (``allow_cloud``) or lose a capability the run depends on (``allow_capability_downgrade``) unless
+    explicitly allowed. Refusals are recorded as events.
+    """
+
+    chain: list[FailoverTarget] = Field(default_factory=list)
+    allow_cloud: bool = False
+    allow_capability_downgrade: bool = False
+
+
 class AgentConfig(BaseModel):
     """Bounds on autonomous behaviour. Every loop in the engine reads its limit from here."""
 
@@ -171,6 +190,7 @@ class AgentConfig(BaseModel):
     max_retries: int = 10  # transient-failure retries per run, across every operation (0 = unlimited)
     max_wall_seconds: int = 3600  # active time per run, summed across resumes (0 = unlimited)
     max_commands: int = 60  # commands a run may execute (0 = unlimited)
+    failover: FailoverConfig = Field(default_factory=FailoverConfig)
     # auto: ask for constrained (JSON-schema) output where the engine supports it, and stop asking for an
     #       endpoint+model once it misbehaves (e.g. loops on whitespace until the token cap).
     # off: never constrain. schema: always constrain, never fall back.

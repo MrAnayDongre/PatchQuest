@@ -409,6 +409,23 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_engines(args: argparse.Namespace) -> int:
+    from patchquest.providers.engines import engine_report
+
+    rows = asyncio.run(engine_report())
+    if args.json:
+        _emit_json(rows)
+        return EXIT_OK
+    for r in rows:
+        if r["available"]:
+            ctx = f" ctx={r['context_limit']}" if r["context_limit"] else ""
+            loaded = ", ".join(r["models"][:2]) if r["model_loaded"] else "no model loaded"
+            print(f"{ICON['ok']} {r['engine']:<9} up {r['latency_ms']}ms  {loaded}{ctx}")
+        else:
+            print(f"{ICON['info']} {r['engine']:<9} not running  ({r['last_error']})")
+    return EXIT_OK
+
+
 def _probe_providers(args: argparse.Namespace) -> int:
     from patchquest.providers.probe import probe_endpoint, probe_local_engines
 
@@ -590,6 +607,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--probe", action="store_true", help="check which local serving engines are running")
     pr.add_argument("--url", help="probe one OpenAI-compatible base URL (e.g. http://localhost:30000/v1)")
     pr.add_argument("--api-key-env", help="env var holding the key for --url")
+    en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
+    en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
     d.add_argument("--json", action="store_true")
     ev = sub.add_parser("eval", help="measure PatchQuest against the evaluation corpus")
@@ -627,7 +646,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)
