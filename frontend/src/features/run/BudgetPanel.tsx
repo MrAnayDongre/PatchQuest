@@ -8,6 +8,9 @@ function fmt(kind: string, n: number): string {
   return kind.includes('time') ? `${Math.round(n)} s` : `${formatCount(n)}${UNITS[kind] ?? ''}`
 }
 
+const LABELS: Record<string, string> = { wall_time_s: 'Wall time', wall_time: 'Wall time' }
+const labelOf = (k: string) => LABELS[k] ?? humanize(k)
+
 export function BudgetPanel({ budget }: { budget: BudgetEntry[] }) {
   return (
     <Card aria-labelledby="budget-title">
@@ -22,13 +25,13 @@ export function BudgetPanel({ budget }: { budget: BudgetEntry[] }) {
             return (
               <li key={b.kind} className="budget-list__item">
                 <div className="budget-list__row">
-                  <span>{humanize(b.kind)}</span>
+                  <span>{labelOf(b.kind)}</span>
                   <span className="ui-muted">
                     {fmt(b.kind, b.used)} {unlimited ? 'used, no limit' : `of ${fmt(b.kind, b.limit)}`}
                   </span>
                 </div>
                 {unlimited ? null : (
-                  <ProgressBar label={`${humanize(b.kind)} used`} value={frac} size="sm" tone={b.exhausted ? 'danger' : frac !== undefined && frac > 0.8 ? 'warning' : 'info'} />
+                  <ProgressBar label={`${labelOf(b.kind)} used`} value={frac} size="sm" tone={b.exhausted ? 'danger' : frac !== undefined && frac > 0.8 ? 'warning' : 'info'} />
                 )}
                 {b.exhausted && <p className="budget-list__warn">Limit reached. Fork this run with a higher limit to continue.</p>}
               </li>

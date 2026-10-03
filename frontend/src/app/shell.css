@@ -338,3 +338,46 @@
 .wf-step__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .wf-step details { margin-top: var(--space-2); }
 .wf-step summary { cursor: pointer; color: var(--color-text-2); min-height: 32px; }
+
+/* ---- integrations, repositories, why, operations */
+.workspace-select { min-width: 180px; }
+.integration-list { display: flex; flex-direction: column; gap: var(--space-4); }
+.integration { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.integration__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.integration__name { font-size: var(--text-lg); min-width: 0; }
+.integration__badges, .badge-row { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+.badge-row--end { justify-content: flex-end; flex-wrap: nowrap; }
+.integration__hook { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.integration__hook code { font-size: var(--text-sm); min-width: 0; }
+.integration__secrets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.integration__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.kind-info { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); }
+.kind-info p { margin: 0; }
+.kind-actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.kind-actions li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.kind-heading { font-size: var(--text-md); margin: 0; }
+.secret-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-3); align-items: start; }
+.secret-row__mode .ui-field__label { visibility: hidden; }
+@media (max-width: 640px) { .secret-row { grid-template-columns: minmax(0, 1fr); } .secret-row__mode .ui-field__label { display: none; } .form-row { grid-template-columns: minmax(0, 1fr); } }
+.repo-list { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: flex; flex-direction: column; }
+.repo-list__item { display: flex; flex-direction: column; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); color: var(--color-text); }
+.repo-list__item:hover { background: var(--color-surface-2); text-decoration: none; }
+.repo-list__item[aria-current='true'] { background: var(--color-accent-soft); }
+.path-form { display: flex; gap: var(--space-3); align-items: flex-end; }
+.path-form .ui-field { flex: 1; }
+@media (max-width: 640px) { .path-form { flex-direction: column; align-items: stretch; } }
+.repo-detail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.repo-detail__title { font-size: var(--text-lg); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+.repo-detail__title .ui-mono { font-size: var(--text-sm); font-weight: 400; }
+.why-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.why-list__item { padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+.why-list__item:first-child { padding-top: 0; border-top: 0; }
+.why-list__head { display: flex; justify-content: space-between; gap: var(--space-3); align-items: flex-start; }
+.why-list__title { font-weight: 500; min-width: 0; }
+.why-list__details { margin: var(--space-2) 0 0; padding-left: var(--space-5); color: var(--color-text-2); font-size: var(--text-sm); }
+.ops { display: flex; flex-direction: column; gap: var(--space-4); }
+.ops__title { font-size: var(--text-xl); }
+.ops__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+@media (max-width: 860px) { .ops__grid { grid-template-columns: minmax(0, 1fr); } }
+.only-sm { display: none; font-size: var(--text-sm); }
+@media (max-width: 640px) { .only-sm { display: block; } .ui-table .ui-mono.ui-wrap { word-break: normal; } }

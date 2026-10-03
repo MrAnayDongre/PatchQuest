@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-export type ShortcutAction = 'go-home' | 'go-runs' | 'go-engines' | 'go-metrics' | 'go-workflows' | 'go-settings' | 'go-extras' | 'new-run' | 'help' | 'palette' | 'toggle-theme'
+export type ShortcutAction = 'go-home' | 'go-runs' | 'go-engines' | 'go-metrics' | 'go-integrations' | 'go-repositories' | 'go-workflows' | 'go-settings' | 'go-extras' | 'new-run' | 'help' | 'palette' | 'toggle-theme'
 
 export const GO_KEYS: Record<string, ShortcutAction> = {
   h: 'go-home',
   r: 'go-runs',
   e: 'go-engines',
   m: 'go-metrics',
+  i: 'go-integrations',
+  p: 'go-repositories',
   w: 'go-workflows',
   s: 'go-settings',
   x: 'go-extras',
@@ -88,6 +90,8 @@ export const SHORTCUT_HELP: { keys: string[]; label: string }[] = [
   { keys: ['g', 'e'], label: 'Go to Engines' },
   { keys: ['g', 'w'], label: 'Go to Workflows' },
   { keys: ['g', 'm'], label: 'Go to Metrics' },
+  { keys: ['g', 'i'], label: 'Go to Integrations' },
+  { keys: ['g', 'p'], label: 'Go to Repositories' },
   { keys: ['g', 's'], label: 'Go to Settings' },
   { keys: ['g', 'x'], label: 'Go to Extras' },
   { keys: ['j', 'k'], label: 'Move down or up in a list of runs' },

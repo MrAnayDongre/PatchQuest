@@ -5,6 +5,8 @@ import type { Run } from '../../api/types'
 import { useApp } from '../../app/AppContext'
 import { Button, Card, CardHeader, Skeleton, TabPanel, Tabs } from '../../design/primitives'
 import { Callout, Dialog, useToast } from '../../design/overlay'
+import { getExplanations } from '../../api/platform'
+import { useAsync } from '../../hooks/useAsync'
 import { useRunStream } from '../../hooks/useRunStream'
 import type { PaletteCommand } from '../../lib/palette'
 import { navigate, runHash } from '../../lib/router'
@@ -15,12 +17,12 @@ import { BudgetPanel } from './BudgetPanel'
 import { ChangesPanel } from './ChangesPanel'
 import { EventTimeline } from './EventTimeline'
 import { FailurePanel } from './FailurePanel'
+import { WhyPanel } from './WhyPanel'
 import { PhaseStepper } from './PhaseStepper'
 import { ForkDialog, ReplayDialog, ResumeDialog } from './RecoveryDialogs'
 import { LineagePanel, RecoveryPanel } from './RecoveryPanel'
 import { RunHeader } from './RunHeader'
 
-const TABS = ['activity', 'changes', 'recovery']
 
 export default function RunPage({ runId, tab }: { runId: string; tab?: string }) {
   const { run, state, connection, error, refreshRun, reconnect } = useRunStream(runId)
@@ -29,7 +31,10 @@ export default function RunPage({ runId, tab }: { runId: string; tab?: string })
   const [dialog, setDialog] = useState<null | 'resume' | 'fork' | 'replay' | 'cancel'>(null)
   const [forkFrom, setForkFrom] = useState<number | undefined>()
   const [cancelling, setCancelling] = useState(false)
-  const current = TABS.includes(tab ?? '') ? (tab as string) : 'activity'
+  const why = useAsync(s => getExplanations(runId, s), [runId, run?.status, run?.current_phase])
+  const hasWhy = (why.data?.length ?? 0) > 0
+  const tabs = hasWhy ? ['activity', 'changes', 'recovery', 'why'] : ['activity', 'changes', 'recovery']
+  const current = tabs.includes(tab ?? '') ? (tab as string) : 'activity'
   const setTab = (t: string) => window.location.replace(runHash(runId, t === 'activity' ? undefined : t))
 
   const status = run?.status
@@ -133,6 +138,7 @@ export default function RunPage({ runId, tab }: { runId: string; tab?: string })
               { id: 'activity', label: 'Activity', count: undefined },
               { id: 'changes', label: 'Changes', count: state.proposedFiles.length },
               { id: 'recovery', label: 'Recovery', count: state.checkpoints.length },
+              ...(hasWhy ? [{ id: 'why', label: 'Why' }] : []),
             ]}
           />
           <TabPanel idPrefix="run" id="activity" active={current === 'activity'}>
@@ -144,6 +150,7 @@ export default function RunPage({ runId, tab }: { runId: string; tab?: string })
           <TabPanel idPrefix="run" id="recovery" active={current === 'recovery'}>
             <RecoveryPanel run={run} state={state} onResume={() => setDialog('resume')} onFork={seq => { setForkFrom(seq); setDialog('fork') }} onReplay={() => setDialog('replay')} />
           </TabPanel>
+          {hasWhy && <TabPanel idPrefix="run" id="why" active={current === 'why'}><WhyPanel items={why.data ?? []} /></TabPanel>}
         </div>
         <aside className="run-grid__side" aria-label="Run summary">
           <BudgetPanel budget={state.budget} />

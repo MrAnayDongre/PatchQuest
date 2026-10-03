@@ -88,6 +88,7 @@ describe('metrics page', () => {
     const calls = mockFetch([
       ...common,
       { match: /\/api\/runs(\?.*)?$/, body: [] },
+      { match: /\/api\/metrics\/operations/, body: { context: { runs_with_context: null, mean_files_selected: null, mean_context_tokens: null, context_precision: null }, memory: {}, policy: {}, workers: { recoveries: null }, workflows: { actions: {}, inbound: {} } } },
       { match: /\/api\/metrics/, body: { window: { since: null, until: null }, totals: block, models: [{ provider: 'mock', model: 'm1', calls: 5, error_rate: 0, latency_ms: { p50: 800, p95: 2000 } }], groups: { m1: block } } },
     ])
     renderApp('#/metrics')
@@ -95,7 +96,7 @@ describe('metrics page', () => {
     expect(screen.getAllByText('67%').length).toBeGreaterThan(0)
     expect(screen.getByText('Model timeout')).toBeTruthy()
     expect(screen.getAllByText('—').length).toBeGreaterThan(2)
-    expect(calls.find(c => c.url.startsWith('/api/metrics'))?.url).toBe('/api/metrics?window=7d')
+    expect(calls.find(c => c.url.startsWith('/api/metrics?'))?.url).toBe('/api/metrics?window=7d')
     fireEvent.change(screen.getByLabelText('Compare'), { target: { value: 'model' } })
     await waitFor(() => expect(calls.some(c => c.url === '/api/metrics?window=7d&group_by=model')).toBe(true))
     await screen.findByRole('heading', { name: 'Comparison' })
@@ -104,6 +105,7 @@ describe('metrics page', () => {
     mockFetch([
       ...common,
       { match: /\/api\/runs(\?.*)?$/, body: [] },
+      { match: /\/api\/metrics\/operations/, body: { context: { runs_with_context: null, mean_files_selected: null, mean_context_tokens: null, context_precision: null }, memory: {}, policy: {}, workers: { recoveries: null }, workflows: { actions: {}, inbound: {} } } },
       { match: /\/api\/metrics/, body: { window: { since: null, until: null }, totals: { ...block, runs: 0, finished: 0 }, models: [] } },
     ])
     renderApp('#/metrics')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'metrics' | 'workflows' | 'workflow' | 'workflow-run' | 'settings' | 'extras' | 'not-found'
+export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'metrics' | 'integrations' | 'repositories' | 'workflows' | 'workflow' | 'workflow-run' | 'settings' | 'extras' | 'not-found'
 
 export interface Route {
   name: RouteName
@@ -25,6 +25,8 @@ export function parseHash(hash: string): Route {
   if (first === 'workflows' && !second) return { name: 'workflows', params: {}, query }
   if (first === 'workflows' && second === 'runs' && third) return { name: 'workflow-run', params: { id: third }, query }
   if (first === 'workflows' && second && second !== 'runs' && !third) return { name: 'workflow', params: { id: second }, query }
+  if (first === 'integrations' && !second) return { name: 'integrations', params: {}, query }
+  if (first === 'repositories' && !second) return { name: 'repositories', params: {}, query }
   if (first === 'metrics' && !second) return { name: 'metrics', params: {}, query }
   if (first === 'settings' && !second) return { name: 'settings', params: {}, query }
   if (first === 'extras' && !third) return { name: 'extras', params: second ? { section: second } : {}, query }
@@ -48,6 +50,8 @@ export function buildHash(name: RouteName, params: Record<string, string> = {}, 
   else if (name === 'workflow') path = `/workflows/${encodeURIComponent(params.id ?? 'new')}`
   else if (name === 'workflow-run') path = `/workflows/runs/${encodeURIComponent(params.id ?? '')}`
   else if (name === 'metrics') path = '/metrics'
+  else if (name === 'integrations') path = '/integrations'
+  else if (name === 'repositories') path = '/repositories'
   else if (name === 'settings') path = '/settings'
   else if (name === 'extras') path = params.section ? `/extras/${encodeURIComponent(params.section)}` : '/extras'
   const qs = new URLSearchParams(query).toString()

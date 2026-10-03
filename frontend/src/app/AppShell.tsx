@@ -17,6 +17,8 @@ import { buildCommands } from './commands'
 import { AppProvider, useApp } from './AppContext'
 import { SHORTCUT_HELP, useGlobalShortcuts, type ShortcutAction } from './shortcuts'
 
+const IntegrationsPage = lazy(() => import('../features/integrations/IntegrationsPage'))
+const RepositoriesPage = lazy(() => import('../features/repositories/RepositoriesPage'))
 const ExtrasPage = lazy(() => import('../features/ExtrasPage'))
 const WorkflowsPage = lazy(() => import('../features/workflows/WorkflowsPage'))
 const BuilderPage = lazy(() => import('../features/workflows/BuilderPage'))
@@ -28,6 +30,8 @@ const NAV: { name: RouteName; label: string; icon: IconName; hash: string }[] = 
   { name: 'engines', label: 'Engines', icon: 'engine', hash: buildHash('engines') },
   { name: 'workflows', label: 'Workflows', icon: 'link', hash: buildHash('workflows') },
   { name: 'metrics', label: 'Metrics', icon: 'clock', hash: buildHash('metrics') },
+  { name: 'integrations', label: 'Integrations', icon: 'link', hash: buildHash('integrations') },
+  { name: 'repositories', label: 'Repositories', icon: 'file', hash: buildHash('repositories') },
   { name: 'settings', label: 'Settings', icon: 'settings', hash: buildHash('settings') },
   { name: 'extras', label: 'Extras', icon: 'extras', hash: buildHash('extras') },
 ]
@@ -139,6 +143,8 @@ function Shell() {
     else if (a === 'go-engines') navigate(buildHash('engines'))
     else if (a === 'go-workflows') navigate(buildHash('workflows'))
     else if (a === 'go-metrics') navigate(buildHash('metrics'))
+    else if (a === 'go-integrations') navigate(buildHash('integrations'))
+    else if (a === 'go-repositories') navigate(buildHash('repositories'))
     else if (a === 'go-settings') navigate(buildHash('settings'))
     else if (a === 'go-extras') navigate(buildHash('extras'))
   }, app.paletteOpen)
@@ -158,6 +164,8 @@ function Shell() {
     case 'workflows': page = <Page><WorkflowsPage /></Page>; break
     case 'workflow': page = <Page><BuilderPage key={route.params.id} id={route.params.id === 'new' ? null : route.params.id} template={route.query.template} runIntent={route.query.run === '1'} /></Page>; break
     case 'workflow-run': page = <Page><WorkflowRunPage key={route.params.id} id={route.params.id} /></Page>; break
+    case 'integrations': page = <Page><IntegrationsPage /></Page>; break
+    case 'repositories': page = <Page><RepositoriesPage /></Page>; break
     case 'metrics': page = <MetricsPage />; break
     case 'settings': page = <SettingsPage />; break
     case 'extras': page = <Page><ExtrasPage section={route.params.section} /></Page>; break

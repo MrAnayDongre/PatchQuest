@@ -38,6 +38,8 @@ export function buildCommands(d: CommandDeps): PaletteCommand[] {
     { id: 'new-workflow', title: 'New workflow', group: 'Actions', keywords: ['build', 'automation', 'create'], run: () => navigate(buildHash('workflow', { id: 'new' })) },
     go('Go to Workflows', buildHash('workflows'), ['automation', 'builder', 'approvals'], ['g', 'w']),
     go('Go to Metrics', buildHash('metrics'), ['success rate', 'latency', 'tokens', 'cost'], ['g', 'm']),
+    go('Go to Integrations', buildHash('integrations'), ['connect', 'github', 'slack', 'webhook', 'jira', 'linear'], ['g', 'i']),
+    go('Go to Repositories', buildHash('repositories'), ['profile', 'memory', 'preferences', 'remember'], ['g', 'p']),
     go('Go to Settings', buildHash('settings'), ['token', 'preferences'], ['g', 's']),
     go('Go to Extras', buildHash('extras'), ['games', 'calendar', 'search', 'memory', 'scheduler'], ['g', 'x']),
   ]

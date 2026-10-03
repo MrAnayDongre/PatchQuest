@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Run } from '../../api/types'
 import { Badge, Button, StatusIndicator } from '../../design/primitives'
 import type { Connection } from '../../hooks/useRunStream'
-import { friendlyStatusLine, statusTone } from '../../lib/eventCopy'
+import { friendlyStatusLine } from '../../lib/eventCopy'
 import { baseName, elapsed, formatDuration } from '../../lib/format'
 import { isActiveStatus, type RunState } from '../../lib/runState'
 import { LineageBadge } from '../common'
@@ -51,8 +51,7 @@ export function RunHeader({ run, state, connection, onCancel, onResume, onFork, 
         </div>
       </div>
       <div className="run-header__status" aria-live="polite">
-        <StatusIndicator status={run.status} />
-        <span className={`run-header__line ui-text--${statusTone(run.status) === 'muted' ? 'muted' : 'info'}`}>{friendlyStatusLine(run)}</span>
+        <StatusIndicator status={run.status} label={friendlyStatusLine(run)} />
         {reason && <span className="ui-muted run-header__reason">{reason}</span>}
         {(connection === 'reconnecting' || connection === 'loading') && <Badge tone="warning">{connection === 'loading' ? 'Loading…' : 'Reconnecting…'}</Badge>}
         {connection === 'error' && <Badge tone="danger">Disconnected</Badge>}

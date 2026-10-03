@@ -5,6 +5,7 @@ import { Button, Card, CardHeader, EmptyState, Field, MetricCard, Select, Skelet
 import { useAsync } from '../hooks/useAsync'
 import { humanize } from '../lib/format'
 import { count, GROUPINGS, millis, money, pair, rate, seconds, WINDOWS } from '../lib/metricsView'
+import { OperationsSection } from './OperationsSection'
 import { ErrorNotice, PageHeader } from './common'
 
 function Block({ m }: { m: MetricsBlock }) {
@@ -87,6 +88,7 @@ export default function MetricsPage() {
           </Card>
         </>
       )}
+      <OperationsSection window={window} />
     </div>
   )
 }
