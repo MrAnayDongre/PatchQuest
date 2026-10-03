@@ -46,5 +46,5 @@ workflow *issue-to-fix*.
 ## Honest limits of the demo
 
 Model quality is not demonstrated: the scripted models always give the planned answer. The integrations are protocol simulators, never live services.
-The timeline starts when the demo starts (history is not backdated, to keep the ledger honest). Run it on a machine you trust: `PATCHQUEST_DEMO=1`
+The timeline starts when the demo starts (history is not backdated, to keep the ledger honest). `patchquest demo trigger --label ui-built` fires a second workflow; each trigger restores the payments repository to its buggy state first. Run it on a machine you trust: `PATCHQUEST_DEMO=1`
 adds endpoints that fabricate issues in the simulator.

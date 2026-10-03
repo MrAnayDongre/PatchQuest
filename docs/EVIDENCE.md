@@ -5,10 +5,10 @@ Measured on one machine, 2026-10-03, branch `anay/core-hardening`. Nothing here 
 | Check | Result |
 |---|---|
 | `ruff check .` / `mypy patchquest` | clean / no issues in 239 files |
-| Backend suite, SQLite | 1807 passed, 18 skipped |
-| Backend suite, PostgreSQL 16 | 1817 passed, 8 skipped (after fixing one `%`-in-literal failure found by the first run) |
-| Line coverage (`pytest --cov=patchquest`, SQLite) | 86% of 18,393 statements |
-| Frontend | 327 tests, typecheck and production build pass; browser smoke (`npm run smoke`) |
+| Backend suite, SQLite | 1821 passed, 18 skipped |
+| Backend suite, PostgreSQL 16 | 1831 passed, 8 skipped |
+| Line coverage (`pytest --cov=patchquest`, SQLite) | 86% of 18,515 statements |
+| Frontend | 329 tests, typecheck and production build pass; browser smoke (`npm run smoke`) |
 | Recovery | real SIGKILL tests (API and workers, SQLite and PostgreSQL); container worker-kill run, once, by hand |
 | Load | see [benchmarks](benchmarks.md): single machine, PostgreSQL with `fsync=off`; not a production capacity claim |
 | Security | tenant-isolation, memory-poisoning, integration and policy suites under `tests/security`; [security](security.md) lists limits |
@@ -19,3 +19,5 @@ TESTED: automated. LOAD_TESTED: measured at volume (single host). MOCKED_PROTOCO
 ## Limitations (unchanged)
 No SSO/OIDC, quotas, object storage or Kubernetes manifests; no live connector verification; no multi-host test; no accessibility audit with assistive technology;
 policy does not cover network reads or artifact disclosure; live model quality is weak (Qwen3-0.6B 0 of 14). See [competitive study](competitive-study.md) for what is and is not claimed relative to other systems.
+
+Demo qualification (every stage, with evidence): [DEMO_QUALIFICATION](DEMO_QUALIFICATION.md).
