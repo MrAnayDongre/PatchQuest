@@ -467,6 +467,17 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
     from patchquest.config import get_config
     from patchquest.observability.metrics import MetricsQuery, compute, parse_window
 
+    if args.operations:
+        from patchquest.observability.operations import compute as operations
+
+        try:
+            with get_db() as conn:
+                report = operations(conn, MetricsQuery(since=parse_window(args.window)), include_install_wide=True)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        _emit_json(report)
+        return EXIT_OK
     try:
         query = MetricsQuery(since=parse_window(args.window), group_by=args.by, pricing=get_config().pricing)
         with get_db() as conn:
@@ -1084,6 +1095,7 @@ def build_parser() -> argparse.ArgumentParser:
     mt.add_argument("--window", default="7d", help="30m, 24h, 7d, 2w (default 7d)")
     mt.add_argument("--by", choices=["model", "provider", "repository", "workspace"])
     mt.add_argument("--json", action="store_true")
+    mt.add_argument("--operations", action="store_true", help="context quality, memory cost, policy denials, recoveries, integrations, plugins (JSON)")
     tr_ = sub.add_parser("trace", help="export a run as an OpenTelemetry trace (OTLP/JSON)")
     tr_.add_argument("run_id")
     tr_.add_argument("--endpoint", help="POST it to an OTLP/HTTP collector, e.g. http://localhost:4318/v1/traces")
