@@ -27,7 +27,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: pip install -e ".[dev,tree-sitter]"
-      - run: ruff check patchquest tests
+      - run: ruff check .
       - run: mypy
 
   unit:
@@ -90,6 +90,23 @@ jobs:
       - run: pip install -e ".[dev,tree-sitter]"
       - run: pytest tests/e2e -q
 
+  security:
+    name: security (tenant isolation, authz, webhooks, SSRF)
+    needs: [unit]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev,tree-sitter]"
+      - run: pytest tests/security tests/unit/connectors -q
+
   sandbox:
     name: sandbox (real containers)
     needs: [unit]
@@ -134,14 +151,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build wheel
-        run: pip wheel ./backend --no-deps -w dist
-      - name: Install into a fresh venv and smoke test
+      - run: scripts/clean_install_check.sh
+
+  container:
+    name: image builds, starts, and serves the UI and API
+    runs-on: ubuntu-latest
+    needs: [frontend, unit]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t patchquest-ci .
+      - name: Start and probe
         run: |
-          python -m venv /tmp/clean
-          /tmp/clean/bin/pip install dist/*.whl
-          mkdir /tmp/proj && printf '# smoke\n' > /tmp/proj/README.md
-          cd /tmp/proj
-          /tmp/clean/bin/patchquest doctor
-          /tmp/clean/bin/patchquest run --repo /tmp/proj --task 'Add exactly this sentence to README.md: "CI smoke."' --no-input
-          grep -q "CI smoke." README.md
+          docker volume create pq-ci
+          TOKEN=$(docker run --rm -v pq-ci:/data patchquest-ci patchquest admin init --org Ci --workspace main --owner ci --json | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          docker run -d --name pq -p 127.0.0.1:18000:8000 -e PATCHQUEST_QUEUE_MODE=true -v pq-ci:/data patchquest-ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18000/ready >/dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:18000/ready
+          curl -sf http://127.0.0.1:18000/ | grep -qi "<html"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/api/runs)" = 401
+          curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18000/api/runs

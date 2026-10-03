@@ -1,0 +1,31 @@
+name: Control-plane benchmark
+
+# Manual or weekly. Numbers depend on the runner, so they are recorded with their hardware and git sha and are
+# never used as a pass/fail gate here; compare runs on the same class of machine.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: python -m benchmarks.control_plane --out benchmarks/history/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-benchmark
+          path: backend/benchmarks/history/*.json
