@@ -192,6 +192,23 @@ def _policies(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _plugins(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS plugin_state (
+            name TEXT PRIMARY KEY, version TEXT NOT NULL, state TEXT NOT NULL, granted_json TEXT NOT NULL,
+            config_json TEXT NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+            updated_at TEXT NOT NULL, updated_by TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS plugin_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, plugin TEXT NOT NULL, type TEXT NOT NULL,
+            capability TEXT, outcome TEXT NOT NULL, duration_ms INTEGER, detail_json TEXT);
+        CREATE INDEX IF NOT EXISTS idx_plugin_events ON plugin_events(plugin, id);
+        CREATE TRIGGER IF NOT EXISTS plugin_events_no_update BEFORE UPDATE ON plugin_events
+            BEGIN SELECT RAISE(ABORT, 'plugin_events is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS plugin_events_no_delete BEFORE DELETE ON plugin_events
+            BEGIN SELECT RAISE(ABORT, 'plugin_events is append-only'); END;
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -204,4 +221,5 @@ MIGRATIONS = [
     Migration(9, "workflows, runs, steps and events", _workflows),
     Migration(10, "run queue and worker leases", _leases),
     Migration(11, "scoped, versioned policies", _policies),
+    Migration(12, "plugin state and events", _plugins),
 ]

@@ -27,14 +27,18 @@ ACTIONS: dict[str, ActionInfo] = {
 class LocalActions:
     """Performs the built-in actions and delegates connector actions to a registered backend, if any."""
 
-    def __init__(self, backends: dict[str, Any] | None = None) -> None:
+    def __init__(self, backends: dict[str, Any] | None = None, plugins: Any = None) -> None:
         self._backends = backends or {}  # connector name ("github") -> object with perform/find_existing
+        self._plugins = plugins  # a PluginHost: enabled tool plugins add "plugin.<name>.<capability>" actions
+
+    def _all(self) -> dict[str, ActionInfo]:
+        return {**ACTIONS, **(self._plugins.tool_actions() if self._plugins is not None else {})}
 
     def names(self) -> list[str]:
-        return list(ACTIONS)
+        return list(self._all())
 
     def info(self, name: str) -> ActionInfo | None:
-        return ACTIONS.get(name)
+        return self._all().get(name)
 
     def _backend(self, name: str) -> Any:
         connector = name.split(".", 1)[0]
@@ -46,10 +50,15 @@ class LocalActions:
     async def perform(self, name: str, params: dict[str, Any], *, idempotency_key: str, approved_by: str | None) -> dict[str, Any]:
         if name == "notify.log":
             return {"logged": str(params.get("message", ""))[:2000]}
+        if name.startswith("plugin.") and self._plugins is not None:
+            _, plugin, capability = name.split(".", 2)
+            # The engine has already applied policy to action.plugin.* (with the workflow's scope) and required a
+            # human approver where the side effect demands one; the host re-checks the system floor.
+            return await self._plugins.invoke(plugin, capability, params, approved=approved_by is not None)
         return await self._backend(name).perform(name, params, idempotency_key=idempotency_key, approved_by=approved_by)
 
     async def find_existing(self, name: str, idempotency_key: str) -> dict[str, Any] | None:
-        if name == "notify.log":
-            return None
+        if name == "notify.log" or name.startswith("plugin."):
+            return None  # a plugin call has no external record to reconcile: non-idempotent ones become 'uncertain'
         backend = self._backends.get(name.split(".", 1)[0])
         return None if backend is None else await backend.find_existing(name, idempotency_key)

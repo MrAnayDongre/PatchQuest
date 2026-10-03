@@ -13,7 +13,7 @@ import os
 import sys
 from typing import Any
 
-from patchquest import cli_policy
+from patchquest import cli_plugins, cli_policy
 from patchquest.database import get_db
 
 EXIT_OK, EXIT_FAILED, EXIT_REJECTED, EXIT_INTERRUPTED, EXIT_NEEDS_CONFIRMATION, EXIT_USAGE = 0, 1, 2, 3, 4, 64
@@ -1132,6 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     ip.add_argument("--workspace", default="ws_local")
     ip.add_argument("--json", action="store_true")
     cli_policy.register(sub)
+    cli_plugins.register(sub)
     oa = sub.add_parser("openapi", help="print the HTTP API's OpenAPI document (the contract SDKs are generated from)")
     oa.add_argument("--out", help="write to this file instead of stdout")
     wk = sub.add_parser("worker", help="execute queued runs (with queue_mode on); recovers runs whose worker died")
@@ -1226,7 +1227,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"config": cli_policy.run, "policy": cli_policy.run, "openapi": _cmd_openapi, "export": _cmd_export, "import": _cmd_import, "backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"plugins": cli_plugins.run, "config": cli_policy.run, "policy": cli_policy.run, "openapi": _cmd_openapi, "export": _cmd_export, "import": _cmd_import, "backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

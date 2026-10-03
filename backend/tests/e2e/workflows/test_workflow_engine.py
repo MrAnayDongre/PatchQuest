@@ -618,3 +618,39 @@ class TestPolicy:
         run_id = engine.start(save(engine, raw), {"type": "manual", "payload": {}})
         await settle(engine, run_id, lambda r: step(run_id, "n")["status"] == "failed")
         assert actions.calls == [] and "needs a human approval first" in step(run_id, "n")["error"]
+
+
+class TestPluginActions:
+    @pytest.mark.asyncio
+    async def test_an_enabled_tool_plugin_is_a_workflow_action_and_policy_still_applies(self, clock):
+        from patchquest.plugins import PluginHost, set_host
+        from patchquest.runtime import policy as pol
+        from patchquest.workflows.catalog import LocalActions
+
+        class Hello:
+            manifest = {"name": "hello", "version": "1.0.0", "kind": "tool", "trust": "trusted",
+                        "capabilities": {"greet": {"side_effect": "READ_ONLY"}}}
+
+            def initialize(self, config): ...
+            def health(self): return {"ok": True}
+            def invoke(self, capability, args): return {"greeting": f"hello {args['who']}"}
+            def shutdown(self): ...
+
+        host = PluginHost(None, scan_entry_points=False, factories={"hello": Hello})
+        set_host(host)
+        engine = WorkflowEngine(TaskService(), LocalActions(plugins=host), clock=clock)
+        raw = {"name": "greeter", "trigger": {"type": "manual"}, "nodes": [
+            {"id": "g", "type": "action", "config": {"action": "plugin.hello.greet", "params": {"who": "{{trigger.payload.who}}"}}},
+            {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "g", "to": "e"}]}
+        with pytest.raises(AssertionError):  # not enabled yet: the action does not exist, so the workflow does not validate
+            save(engine, raw)
+        host.enable("hello", grant=[], actor="user:admin")
+        run_id = engine.start(save(engine, raw), {"type": "manual", "payload": {"who": "ana"}})
+        await settle(engine, run_id, "completed")
+        assert step(run_id, "g")["output"] == {"greeting": "hello ana"}
+
+        pol.store({"name": "quiet", "scope": "workspace", "rules": [{"action": "action.plugin.hello.*", "result": "DENY", "reason": "muted"}]},
+                  scope_ref=WS, actor="a")
+        second = engine.start(save(engine, raw), {"type": "manual", "payload": {"who": "bo"}})
+        await settle(engine, second, lambda r: step(second, "g")["status"] == "failed")
+        assert "muted" in step(second, "g")["error"]

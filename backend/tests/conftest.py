@@ -12,6 +12,7 @@ from patchquest.agents import roles as _roles
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.config import AppConfig, set_config
 from patchquest.database import init_db, set_db_path
+from patchquest.plugins import PluginHost, set_host
 from patchquest.providers import health as _health
 from patchquest.runtime import retry as _retry
 from patchquest.workflows import runtime as _wf_runtime
@@ -28,6 +29,7 @@ def isolated_runtime(tmp_path_factory, tmp_path, monkeypatch):
     for var in ("PATCHQUEST_API_TOKEN", "PATCHQUEST_DB", "PATCHQUEST_CONFIG"):
         monkeypatch.delenv(var, raising=False)
     _health.reset()
+    set_host(PluginHost(tmp_path_factory.mktemp("plugins"), scan_entry_points=False))
     _wf_runtime.set_engine(None)
     _poc._UNSUPPORTED.clear()
     _roles._CONSTRAINED_UNRELIABLE.clear()

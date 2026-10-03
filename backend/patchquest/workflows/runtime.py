@@ -7,6 +7,7 @@ import logging
 from contextlib import suppress
 
 from patchquest.application import get_service
+from patchquest.plugins import get_host
 from patchquest.workflows.catalog import LocalActions
 from patchquest.workflows.engine import WorkflowEngine
 
@@ -18,7 +19,7 @@ _task: asyncio.Task[None] | None = None
 def get_engine() -> WorkflowEngine:
     global _engine
     if _engine is None:
-        _engine = WorkflowEngine(get_service(), LocalActions())
+        _engine = WorkflowEngine(get_service(), LocalActions(plugins=get_host()))
     return _engine
 
 
