@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +53,7 @@ async def trigger_issue(request: Request, label: str = "agent-ready") -> dict[st
     sims: simulators.Simulators = STATE["sims"]
     restored = _restore_the_bug()
     number = sims.open_issue(str(fx.ISSUE["title"]), str(fx.ISSUE["body"]))
-    delivery_id = f"demo-{number}-{STATE.setdefault('deliveries', 0)}"
-    STATE["deliveries"] += 1
+    delivery_id = f"demo-{number}-{uuid.uuid4().hex[:8]}"  # unique across restarts: the receiver deduplicates by delivery id
     delivery = sims.labeled_event(number, str(fx.ISSUE["title"]), str(fx.ISSUE["body"]), delivery_id, label)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app), base_url="http://localhost") as client:
         reply = await client.post(f"/hooks/{_integration_id('github')}", content=delivery.body, headers=delivery.headers)

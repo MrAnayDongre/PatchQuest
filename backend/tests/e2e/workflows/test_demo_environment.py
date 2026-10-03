@@ -30,6 +30,15 @@ async def world(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_starting_an_existing_demo_again_restores_what_the_integrations_refer_to(world):
+    _, sims, directory = world
+    for key in simulators.ENV:
+        os.environ.pop(key, None)  # a new process starts without them
+    again = await seed.seed(directory, sims)
+    assert again == {"seeded": False} and all(os.environ.get(k) == v for k, v in simulators.ENV.items())
+
+
+@pytest.mark.asyncio
 async def test_the_seeded_history_has_every_kind_of_outcome(world):
     result, _, _ = world
     runs = {k: run_row(v) for k, v in result["runs"].items()}

@@ -116,17 +116,18 @@ def _configure(payments: Path, checkout: Path) -> None:
 
 async def seed(directory: Path, sims: simulators.Simulators) -> dict[str, Any]:
     """Create the demo world in the current database. Returns what was made (and ``{"seeded": False}`` if it already existed)."""
+    from patchquest.config import get_config
+
     register_scripts()
     integrations.set_http(sims.http())
+    os.environ.update(simulators.ENV)  # the integrations hold references to these, so every start needs them, not only the first
+    get_config().safety.approval_timeout_seconds = 3600  # a waiting approval should still be there when someone looks
     with get_db() as conn:
         if conn.execute("SELECT 1 FROM runs LIMIT 1").fetchone():
             return {"seeded": False}
     payments, checkout = _prepare_world(directory)
     _configure(payments, checkout)
     svc = get_service()
-    from patchquest.config import get_config
-
-    get_config().safety.approval_timeout_seconds = 3600  # a waiting approval should still be there when someone looks
 
     def start(repo: Path, task: str, model: str, **kw: Any) -> str:
         run = svc.create_run(repo_path=str(repo), task=task, provider="scripted", model=model, created_by="demo:ana", **kw)
