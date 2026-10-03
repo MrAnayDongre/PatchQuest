@@ -31,6 +31,7 @@ from patchquest.application.service import TaskService
 from patchquest.config import validate_overrides
 from patchquest.database import get_db
 from patchquest.domain.failures import Origin, classify
+from patchquest.domain.policy import Result
 from patchquest.domain.workflows import (
     REQUIRES_APPROVAL_EFFECTS,
     ActionInfo,
@@ -47,6 +48,7 @@ from patchquest.domain.workflows import (
 )
 from patchquest.persistence import identity as ids
 from patchquest.persistence.ledger import now_iso
+from patchquest.runtime import policy as policy_runtime
 from patchquest.runtime.retry import run_with_retry
 from patchquest.workflows import store
 
@@ -558,6 +560,17 @@ class WorkflowEngine:
         with get_db() as conn:
             approver = self._approver(conn, run["id"], wf, node.id)
             ctx = self._context(conn, run)
+        decision = policy_runtime.decide(
+            policy_runtime.chain_for(workspace_id=run["workspace_id"], workflow_id=run["workflow_id"]),
+            f"action.{name}", info.side_effect)
+        if decision.result is Result.DENY:
+            self._step_failed(run, wf, node, step, f"'{name}' is blocked by policy '{decision.source_policy}': {decision.reason}",
+                              {"policy": decision.to_dict()})
+            return True
+        if decision.approval_required and approver is None and not self._allow_unapproved_writes:
+            self._step_failed(run, wf, node, step, f"'{name}' needs a human approval first ({decision.reason})",
+                              {"policy": decision.to_dict()})
+            return True
         if info.side_effect in REQUIRES_APPROVAL_EFFECTS and approver is None and not self._allow_unapproved_writes:
             self._step_failed(run, wf, node, step, f"'{name}' ({info.side_effect.value}) needs a human approval first")
             return True

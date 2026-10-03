@@ -591,3 +591,30 @@ class TestDeliveryResilience:
         with get_db() as conn:
             refused = [e for e in ids.read_audit(conn, [WS]) if e["action"] == "workflow.start_failed"]
         assert refused and "no longer passes validation" in refused[0]["detail"]["reason"]
+
+
+class TestPolicy:
+    @pytest.mark.asyncio
+    async def test_a_policy_denial_stops_an_approved_external_write(self, engine, actions, repo):
+        from patchquest.runtime import policy as pol
+        pol.store({"name": "no-comments", "scope": "workspace",
+                   "rules": [{"action": "action.github.*", "result": "DENY", "reason": "read-only workspace"}]},
+                  scope_ref=WS, actor="user:admin")
+        script_agent()
+        run_id = engine.start(save(engine, flow(repo)), {"type": "manual", "payload": {"title": "t"}})
+        await waiting_at(engine, run_id, "gate")
+        await engine.decide(run_id, "gate", "approve", "user:ana")
+        await settle(engine, run_id, lambda r: step(run_id, "post")["status"] == "failed")
+        assert actions.calls == [] and "blocked by policy 'no-comments'" in step(run_id, "post")["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_policy_can_require_approval_for_a_write_the_workflow_did_not_gate(self, engine, actions, repo):
+        from patchquest.runtime import policy as pol
+        pol.store({"name": "ask", "scope": "workspace", "rules": [{"action": "action.log.note", "result": "REQUIRE_APPROVAL",
+                                                                  "reason": "even logging needs sign-off"}]}, scope_ref=WS, actor="a")
+        raw = {"name": "n", "trigger": {"type": "manual"}, "nodes": [{"id": "n", "type": "action", "config": {"action": "log.note", "params": {}}},
+                                                                    {"id": "e", "type": "end", "config": {}}],
+               "edges": [{"from": "n", "to": "e"}]}
+        run_id = engine.start(save(engine, raw), {"type": "manual", "payload": {}})
+        await settle(engine, run_id, lambda r: step(run_id, "n")["status"] == "failed")
+        assert actions.calls == [] and "needs a human approval first" in step(run_id, "n")["error"]

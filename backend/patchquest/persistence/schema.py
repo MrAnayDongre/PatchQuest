@@ -180,6 +180,18 @@ def _leases(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, queued_at)")
 
 
+def _policies(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS policies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, scope INTEGER NOT NULL, scope_ref TEXT NOT NULL, name TEXT NOT NULL,
+            version INTEGER NOT NULL, document_json TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL, created_by TEXT NOT NULL, UNIQUE (scope, scope_ref, name, version));
+        CREATE INDEX IF NOT EXISTS idx_policies_active ON policies(active, scope, scope_ref);
+        CREATE TRIGGER IF NOT EXISTS policies_no_delete BEFORE DELETE ON policies
+            BEGIN SELECT RAISE(ABORT, 'policies keep their history; disable instead'); END;
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -191,4 +203,5 @@ MIGRATIONS = [
     CONNECTOR_MIGRATION,
     Migration(9, "workflows, runs, steps and events", _workflows),
     Migration(10, "run queue and worker leases", _leases),
+    Migration(11, "scoped, versioned policies", _policies),
 ]

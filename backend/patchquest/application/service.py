@@ -25,6 +25,7 @@ from patchquest.orchestrator.state_machine import RunStateMachine
 from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
 from patchquest.runtime import lineage, queue
+from patchquest.runtime import policy as policy_runtime
 from patchquest.runtime.fingerprint import Drift, DriftReport
 from patchquest.runtime.replay import (
     REPLAY_OVERRIDES,
@@ -101,7 +102,10 @@ class TaskService:
         """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path."""
         repo_path = validate_repo_path(repo_path)
         base_url = validate_base_url(base_url)
-        overrides_json = json.dumps(validate_overrides(overrides)) if overrides else None
+        overrides = policy_runtime.clamp_overrides(
+            validate_overrides(overrides) if overrides else None,
+            policy_runtime.chain_for(workspace_id=workspace_id, repo_path=repo_path, user=created_by))
+        overrides_json = json.dumps(overrides) if overrides else None
         run_id = str(uuid.uuid4())
         now = now_iso()
         with get_db() as conn:

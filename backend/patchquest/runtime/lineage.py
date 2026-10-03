@@ -14,7 +14,8 @@ from typing import Any
 
 from patchquest.config import validate_overrides
 from patchquest.database import now_iso
-from patchquest.persistence import checkpoints, ledger
+from patchquest.persistence import checkpoints, ledger, policies
+from patchquest.runtime import policy as policy_runtime
 
 MAX_LINEAGE_DEPTH = 50  # a cycle is impossible by construction; this only bounds a pathological chain
 
@@ -31,6 +32,9 @@ def create_child(
         raise LookupError(parent_id)
     merged = {**(json.loads(parent["overrides_json"]) if parent["overrides_json"] else {}), **(overrides or {})}
     validate_overrides(merged)
+    # A fork or replay can ask for different limits, never for more than the policies in force allow.
+    merged = policy_runtime.clamp_overrides(merged, policies.load_chain(
+        conn, workspace_id=parent["workspace_id"], repo_path=parent["repo_path"], user=actor)) or {}
     child_id, now = run_id or str(uuid.uuid4()), now_iso()
     conn.execute(
         """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile, memory_mode, runtime_mode,

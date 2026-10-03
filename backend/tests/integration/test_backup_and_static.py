@@ -67,7 +67,7 @@ async def test_a_newer_schema_is_refused_and_an_older_one_is_noted_not_failed(po
     conn.execute("INSERT INTO schema_migrations VALUES (999, 'future', 'n')")
     conn.commit()
     assert not backup.verify(dest).ok and "newer than this PatchQuest" in backup.verify(dest).problems[0]
-    conn.execute("DELETE FROM schema_migrations WHERE version IN (999, 10)")
+    conn.execute("DELETE FROM schema_migrations WHERE version IN (999, (SELECT MAX(version) FROM schema_migrations WHERE version < 999))")
     conn.commit()
     conn.close()
     old = backup.verify(dest)

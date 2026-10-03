@@ -27,6 +27,7 @@ from patchquest.domain import budget
 from patchquest.domain.approvals import STATUS_FOR, ApprovalStatus, Decision
 from patchquest.domain.effects import GRANTABLE, SideEffect
 from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
+from patchquest.domain.policy import Result
 from patchquest.domain.runs import IllegalTransition, RunStatus
 from patchquest.orchestrator import snapshot
 from patchquest.orchestrator.event_bus import event_bus
@@ -34,6 +35,7 @@ from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
 from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
+from patchquest.runtime import policy as policy_runtime
 from patchquest.tools.secret_guard import redact_secrets
 
 if TYPE_CHECKING:
@@ -171,6 +173,7 @@ class RunStateMachine:
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
         self._cancel_flag = threading.Event()  # the same signal for code running in worker threads (subprocesses)
+        self._policies: list[Any] | None = None
         self._abandoned = False  # another worker owns the run now: stop quietly, write nothing
         self._critical = False  # True while an operation that must not be interrupted half-way is running
         self.attempt = 1  # incremented by resume; every event carries it
@@ -445,6 +448,18 @@ class RunStateMachine:
         return approvals.Outcome(approval_id, decision, ApprovalStatus(row["status"]),
                                  row["modified_command"] if decision is Decision.MODIFY else row["command"])
 
+    async def _policy_chain(self) -> list[Any]:
+        """The policies that apply to this run, loaded once per machine (a policy change applies to the next run or resume)."""
+        if self._policies is None:
+            def load() -> list[Any]:
+                with get_db() as conn:
+                    row = conn.execute("SELECT workspace_id, created_by FROM runs WHERE id = ?", (self.run_id,)).fetchone()
+                if row is None:
+                    return []
+                return policy_runtime.chain_for(workspace_id=row["workspace_id"], repo_path=self.ctx.repo_path, user=row["created_by"])
+            self._policies = await asyncio.to_thread(load)
+        return self._policies
+
     async def _exec(self, command: str) -> dict[str, Any]:
         """Run ``command`` in the workspace through the policy gate. Never raises."""
         from patchquest.tools.command_effects import effect_of
@@ -456,14 +471,21 @@ class RunStateMachine:
         effect = effect_of(decision)
         safe_cmd = redact_secrets(command)
         approved = decision.auto
+        verdict = policy_runtime.decide(await self._policy_chain(), "command.run", effect)
+        if verdict.result is Result.DENY:
+            decision_reason = f"policy '{verdict.source_policy}': {verdict.reason}"
+        else:
+            decision_reason = decision.reason
 
-        if decision.level == RiskLevel.BLOCKED:
-            await self._emit("command_blocked", message=f"Blocked: {decision.reason}",
-                             payload={"command": safe_cmd, "reason": decision.reason, "side_effect": effect.value})
-            result = {"success": False, "returncode": -2, "stdout": "", "stderr": f"Blocked: {decision.reason}",
+        if decision.level == RiskLevel.BLOCKED or verdict.result is Result.DENY:
+            await self._emit("command_blocked", message=f"Blocked: {decision_reason}",
+                             payload={"command": safe_cmd, "reason": decision_reason, "side_effect": effect.value,
+                                      "policy": verdict.to_dict() if verdict.result is Result.DENY else None})
+            result = {"success": False, "returncode": -2, "stdout": "", "stderr": f"Blocked: {decision_reason}",
                       "blocked": True}
         else:
-            if decision.level == RiskLevel.RISKY_ASK:
+            if decision.level == RiskLevel.RISKY_ASK or verdict.approval_required:
+                approved = False
                 with get_db() as conn:
                     remembered = approvals.has_grant(conn, self.run_id, command)
                 if remembered:
@@ -471,7 +493,8 @@ class RunStateMachine:
                     await self._emit("approval_reused", message=f"Approved earlier in this run: {safe_cmd}",
                                      payload={"command": safe_cmd, "side_effect": effect.value})
                 else:
-                    outcome = await self._request_approval("command", command, decision.reason, side_effect=effect,
+                    ask_reason = verdict.reason if decision.level != RiskLevel.RISKY_ASK else decision.reason
+                    outcome = await self._request_approval("command", command, ask_reason, side_effect=effect,
                                                            risk=decision.level.value)
                     approved = outcome.approved
                     if approved and outcome.decision is Decision.MODIFY and outcome.command:
