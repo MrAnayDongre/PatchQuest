@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from patchquest import demo
 from patchquest.api.auth import authenticate_request, local_scope, require
 from patchquest.api.routes_calendar import router as calendar_router
 from patchquest.api.routes_hooks import router as hooks_router
@@ -52,6 +53,13 @@ async def lifespan(app: FastAPI):
     from patchquest.workflows.runtime import start_loop as start_workflows
     from patchquest.workflows.runtime import stop_loop as stop_workflows
     await start_workflows()
+    if demo.is_demo():
+        from patchquest.demo import routes as demo_routes
+        from patchquest.demo import seed as demo_seed
+        from patchquest.demo import simulators as demo_simulators
+
+        demo_routes.STATE["sims"] = demo_simulators.Simulators()
+        demo_routes.STATE["seed"] = await demo_seed.seed(demo.demo_dir(), demo_routes.STATE["sims"])
 
     yield
 
@@ -86,6 +94,10 @@ app.include_router(knowledge_router)
 app.include_router(tenancy_router)
 app.include_router(integrations_router)
 app.include_router(hooks_router)
+if demo.is_demo():
+    from patchquest.demo.routes import router as demo_router
+
+    app.include_router(demo_router)
 # The provider catalogue and health are global and read-only; the outbound test needs a write permission.
 app.include_router(providers_router, dependencies=[Depends(require(Permission.RUN_READ))])
 # These features keep global (not per-workspace) data. Until they are tenant-scoped they work only while a

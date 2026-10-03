@@ -79,8 +79,18 @@ def _has_mutation_intent(task_lower: str) -> bool:
     return bool(_MUTATION_RE.search(scrubbed))
 
 
+# "Do not modify any files", "don't change anything", "without editing the repo": a refusal that covers the whole
+# repository. A negation with a narrower object ("don't change the tests", "any other files") is a scope limit
+# and is not read-only.
+_GLOBAL_NEGATION = re.compile(
+    r"\b(?:do\s+not|don't|dont|never|must\s+not|should\s+not|shouldn't|without|please\s+don't)\s+(?:actually\s+)?"
+    r"(?:modify|modifying|change|changing|edit|editing|alter|altering|touch|touching|write\s+to|writing\s+to|update|updating|apply|applying)\s+"
+    r"(?:any|the|my|our|your|these|those|all)?\s*(?:of\s+)?(?:files?|anything|code|repo(?:sitory)?|source(?:\s+code)?|codebase|project)\b(?!\s+other)",
+    re.IGNORECASE)
+
+
 def _has_read_only_override(task_lower: str) -> bool:
-    return any(phrase in task_lower for phrase in _READ_ONLY_OVERRIDES)
+    return any(phrase in task_lower for phrase in _READ_ONLY_OVERRIDES) or bool(_GLOBAL_NEGATION.search(_scrub_scope_constraints(task_lower)))
 
 
 def _has_read_only_intent(task_lower: str) -> bool:

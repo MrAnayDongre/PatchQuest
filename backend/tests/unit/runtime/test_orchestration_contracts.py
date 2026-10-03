@@ -31,6 +31,20 @@ class TestReadOnlyDetection:
     def test_do_not_make_code_changes(self):
         assert _detect_read_only("Analyze repo. Do not make code changes.", False)
 
+    @pytest.mark.parametrize("task", [
+        "Explain how refunds are processed. Do not modify any files.", "Explain the repo. Don't change anything.",
+        "Describe the architecture without editing the repository", "Summarize the auth flow, please don't touch the code",
+        "Review this module; never modify the source code", "Explain what compute_fee does. Do not write to any files."])
+    def test_a_refusal_to_modify_anything_means_read_only(self, task):
+        assert _detect_read_only(task, False)
+
+    @pytest.mark.parametrize("task", [
+        "Fix the rounding bug. Don't change the tests.", "Fix add() and do not modify any other files",
+        "Implement the feature without touching the public API", "Fix the bug; do not change code files unrelated to billing",
+        "Rename the function but never modify the changelog"])
+    def test_a_narrower_negation_is_a_scope_limit_not_read_only(self, task):
+        assert not _detect_read_only(task, False)
+
     def test_inspect(self):
         assert _detect_read_only("Inspect the login module", False)
 
