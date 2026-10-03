@@ -27,7 +27,7 @@ T = TypeVar("T")
 NEVER_RETRY = frozenset({
     FailureKind.COMMAND_DENIED, FailureKind.USER_CANCELLED, FailureKind.BUDGET_EXHAUSTED,
     FailureKind.INTERNAL_INVARIANT, FailureKind.REPOSITORY_DRIFT, FailureKind.MODEL_CAPABILITY,
-    FailureKind.CONNECTOR_AUTH, FailureKind.MODEL_AUTH, FailureKind.PATCH_PARSE, FailureKind.MODEL_INVALID_OUTPUT,
+    FailureKind.CONNECTOR_AUTH, FailureKind.MODEL_AUTH, FailureKind.REPLAY_DIVERGED, FailureKind.PATCH_PARSE, FailureKind.MODEL_INVALID_OUTPUT,
 })
 
 

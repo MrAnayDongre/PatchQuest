@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
 # Runtime-only members of RunContext: re-created on resume, never persisted.
 _EPHEMERAL = {"event_sink", "workspace_path"}
+# Who/what/where this run is. These belong to the run being executed, never to the checkpoint's origin:
+# restoring them would make a fork believe it is its parent (wrong run id, wrong model).
+_IDENTITY = {"run_id", "provider", "model", "base_url", "runtime_mode", "repo_path", "task", "dry_run", "read_only"}
 # Fields holding captured process output. Anything a command printed may include a credential, and a
 # checkpoint outlives the run, so it is redacted before it is written (file contents are left intact).
 _OUTPUT_FIELDS = ("commands_run", "test_results", "baseline_results")
@@ -68,7 +71,7 @@ def restore(machine: RunStateMachine, state: dict[str, Any]) -> dict[str, dict[s
 
     Unknown keys are ignored and missing ones keep their defaults, so checkpoints survive field changes.
     """
-    known = {f.name for f in fields(RunContext)} - _EPHEMERAL
+    known = {f.name for f in fields(RunContext)} - _EPHEMERAL - _IDENTITY
     for name, value in (state.get("ctx") or {}).items():
         if name in known:
             setattr(machine.ctx, name, value)

@@ -17,6 +17,7 @@ from patchquest.agents.providers_openai_compatible import (
     VLLMProvider,
 )
 from patchquest.agents.providers_openrouter import OpenRouterProvider
+from patchquest.agents.providers_recorded import RecordedProvider
 from patchquest.agents.providers_scripted import ScriptedProvider
 
 PROVIDERS: dict[str, type[ProviderBase]] = {
@@ -33,6 +34,7 @@ PROVIDERS: dict[str, type[ProviderBase]] = {
     "llamacpp": LlamaCppProvider,
     "lmstudio": LMStudioProvider,
     "scripted": ScriptedProvider,  # deterministic replay for tests, evaluation and demos
+    "recorded": RecordedProvider,  # internal: serves a past run's stored responses (run replay)
 }
 
 

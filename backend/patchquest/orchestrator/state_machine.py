@@ -20,7 +20,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from patchquest import __version__
-from patchquest.config import get_config
+from patchquest.config import config_overrides, get_config, validate_overrides
 from patchquest.database import get_db, now_iso
 from patchquest.domain import budget
 from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
@@ -134,10 +134,12 @@ class RunStateMachine:
         runtime_mode: str = "local",
         dry_run: bool = False,
         base_url: str | None = None,
+        overrides: dict[str, Any] | None = None,
     ) -> None:
         from patchquest.orchestrator.run_context import _detect_read_only
 
         self.run_id = run_id
+        self.overrides = validate_overrides(overrides) if overrides else {}
         read_only = _detect_read_only(task, dry_run)
         self.ctx = RunContext(
             run_id=run_id, repo_path=repo_path, task=task,
@@ -153,6 +155,9 @@ class RunStateMachine:
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._promotion_reconciled: str | None = None  # "applied": resume found promotion had already landed
         self._attempt_clock = time.monotonic()  # wall time is charged to the budget in ticks
+        # Replay only: the original run's pre-change file contents, laid over the shadow workspace so the
+        # replay starts from the files the original saw even though the real repository has since moved on.
+        self.replay_base: dict[str, bytes | None] | None = None
         self._failure: Failure | None = None  # the first thing that went wrong; becomes the run's failure kind
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
@@ -190,6 +195,10 @@ class RunStateMachine:
             return False
 
     async def execute(self, resumed: bool = False) -> None:
+        with config_overrides(self.overrides):  # this run's settings, visible to everything it awaits
+            await self._execute(resumed)
+
+    async def _execute(self, resumed: bool) -> None:
         if not resumed:  # a resumed run was already moved to RUNNING by TaskService.resume
             self._move(RunStatus.RUNNING, "execution started")
         try:
@@ -321,6 +330,8 @@ class RunStateMachine:
 
             ws = ShadowWorkspace(self.run_id, self.ctx.repo_path)
             await asyncio.to_thread(ws.create)
+            if self.replay_base:
+                await asyncio.to_thread(ws.restore, self.replay_base)
             self._workspace = ws
             self.ctx.workspace_path = str(ws.path)
             await self._emit("workspace_created", message="Created isolated workspace for validation")

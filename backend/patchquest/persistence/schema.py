@@ -72,9 +72,21 @@ def _failure_kind(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_failure ON runs(failure_kind) WHERE failure_kind IS NOT NULL")
 
 
+def _lineage(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "runs", {
+        "parent_run_id": "TEXT REFERENCES runs(id)",
+        "parent_checkpoint_seq": "INTEGER",
+        "lineage_kind": "TEXT",  # 'fork' | 'replay'
+        "replay_mode": "TEXT",  # 'model' | 'live'
+        "overrides_json": "TEXT",  # per-run settings, re-applied on resume
+    })
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id) WHERE parent_run_id IS NOT NULL")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
     Migration(3, "checkpoints", _checkpoints),
     Migration(4, "run failure kind", _failure_kind),
+    Migration(5, "run lineage and per-run overrides", _lineage),
 ]

@@ -326,7 +326,7 @@ def test_no_hardcoded_api_keys_in_config():
 
 
 def test_provider_registry_has_all_providers():
-    expected = {"mock", "openai", "anthropic", "ollama", "groq", "nvidia", "openrouter", "openai_compatible", "scripted", "vllm", "sglang", "llamacpp", "lmstudio"}
+    expected = {"mock", "openai", "anthropic", "ollama", "groq", "nvidia", "openrouter", "openai_compatible", "scripted", "recorded", "vllm", "sglang", "llamacpp", "lmstudio"}
     assert set(PROVIDERS.keys()) == expected
 
 

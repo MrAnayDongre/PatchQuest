@@ -158,6 +158,99 @@ async def _resume(args: argparse.Namespace) -> int:
     return await _follow(svc, args.run_id, args.json, args.no_input, after_id=seen)
 
 
+def _parse_overrides(pairs: list[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        if not sep:
+            raise ValueError(f"--set expects key=value, got '{pair}'")
+        try:
+            out[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            out[key] = raw
+    return out
+
+
+async def _fork(args: argparse.Namespace) -> int:
+    from patchquest.application import get_service
+    from patchquest.application.service import ForkBlocked, ForkError, RunNotFound
+    from patchquest.security import RepoPathError
+
+    svc = get_service()
+    try:
+        child = svc.fork(args.run_id, from_seq=args.from_seq, provider=args.provider, model=args.model,
+                         base_url=args.base_url, overrides=_parse_overrides(args.set or []), accept_drift=args.accept_drift)
+    except RunNotFound:
+        print(f"error: no run {args.run_id}", file=sys.stderr)
+        return EXIT_USAGE
+    except (ForkError, ValueError, RepoPathError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except ForkBlocked as exc:
+        print(f"not forked: files changed since that checkpoint ({exc}). Review them, then re-run with --accept-drift.",
+              file=sys.stderr)
+        return EXIT_NEEDS_CONFIRMATION
+    if not args.json:
+        print(f"fork {child['id']}  of {args.run_id[:8]}", file=sys.stderr)
+    return await _follow(svc, child["id"], args.json, args.no_input)
+
+
+async def _replay(args: argparse.Namespace) -> int:
+    from patchquest.application import get_service
+    from patchquest.application.service import RunNotFound
+    from patchquest.runtime.replay import NotReplayable, ReplayMode, StateReplay, compare_runs, comparison_payload
+
+    svc = get_service()
+    try:
+        result = svc.replay(args.run_id, ReplayMode(args.mode))
+    except (RunNotFound, LookupError):
+        print(f"error: no run {args.run_id}", file=sys.stderr)
+        return EXIT_USAGE
+    except NotReplayable as exc:
+        print(f"error: cannot replay: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    if isinstance(result, StateReplay):
+        payload = {"run_id": result.run_id, "ok": result.ok, "findings": list(result.findings),
+                   "status_trail": list(result.status_trail), "phases": result.phases, "events": result.events,
+                   "checkpoints": result.checkpoints}
+        if args.json:
+            _emit_json(payload)
+        else:
+            print(f"{'consistent' if result.ok else 'INCONSISTENT'}: {result.events} events, {result.checkpoints} checkpoints, "
+                  f"status trail {' -> '.join(result.status_trail) or '(none)'}")
+            for finding in result.findings:
+                print(f"  ! {finding}")
+        return EXIT_OK if result.ok else EXIT_FAILED
+    replay_id = result["id"]
+    if not args.json:
+        print(f"replay {replay_id} ({args.mode}) of {args.run_id[:8]}: nothing is written to the repository", file=sys.stderr)
+    code = await _follow(svc, replay_id, args.json, True)
+    comparison = comparison_payload(compare_runs(args.run_id, replay_id))
+    if args.json:
+        _emit_json({"type": "comparison", **comparison})
+    elif comparison["matched"]:
+        print("matches the original run", file=sys.stderr)
+    else:
+        for d in comparison["divergences"]:
+            print(f"  differs: {d['aspect']}: original={d['original']!r} replay={d['replay']!r}", file=sys.stderr)
+    return EXIT_OK if comparison["matched"] and code in (EXIT_OK, EXIT_REJECTED) else EXIT_FAILED
+
+
+def _cmd_lineage(args: argparse.Namespace) -> int:
+    from patchquest.application import get_service
+
+    info = get_service().lineage(args.run_id)
+    if args.json:
+        _emit_json(info)
+        return EXIT_OK
+    for r in info["ancestry"]:
+        via = f" ({r['lineage_kind']} from checkpoint {r['parent_checkpoint_seq']})" if r["lineage_kind"] else ""
+        print(f"{r['id'][:8]}  {r['status']:<11} {(r.get('model') or '-'):<24}{via}")
+    for c in info["children"]:
+        print(f"  child {c['id'][:8]}  {c['lineage_kind']:<7} {c['status']:<11} {c.get('model') or '-'}")
+    return EXIT_OK
+
+
 def _cmd_checkpoints(args: argparse.Namespace) -> int:
     from patchquest.persistence import checkpoints
 
@@ -435,6 +528,24 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--rollback", action="store_true", help="first undo a half-applied promotion")
     rs.add_argument("--no-input", action="store_true", help="deny every approval request instead of prompting")
     rs.add_argument("--json", action="store_true")
+    fk = sub.add_parser("fork", help="start a new run from a checkpoint of another, optionally with a different model")
+    fk.add_argument("run_id")
+    fk.add_argument("--from", dest="from_seq", type=int, help="checkpoint number (default: the latest valid one)")
+    fk.add_argument("--provider")
+    fk.add_argument("--model")
+    fk.add_argument("--base-url")
+    fk.add_argument("--set", action="append", metavar="agent.KEY=VALUE", help="override a setting for the fork only")
+    fk.add_argument("--accept-drift", action="store_true", help="fork although files changed since the checkpoint")
+    fk.add_argument("--no-input", action="store_true")
+    fk.add_argument("--json", action="store_true")
+    rp = sub.add_parser("replay", help="re-run a past run without side effects, or verify its history")
+    rp.add_argument("run_id")
+    rp.add_argument("--mode", choices=["state", "model", "live"], default="state",
+                    help="state: verify the event history; model: reuse recorded model answers; live: ask the model again")
+    rp.add_argument("--json", action="store_true")
+    ln = sub.add_parser("lineage", help="where a run came from and what was forked or replayed from it")
+    ln.add_argument("run_id")
+    ln.add_argument("--json", action="store_true")
     cps = sub.add_parser("checkpoints", help="list a run's checkpoints and whether each verifies")
     cps.add_argument("run_id")
     cps.add_argument("--json", action="store_true")
@@ -486,7 +597,11 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run(args))
     if args.cmd == "resume":
         return asyncio.run(_resume(args))
-    handlers = {"checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    if args.cmd == "fork":
+        return asyncio.run(_fork(args))
+    if args.cmd == "replay":
+        return asyncio.run(_replay(args))
+    handlers = {"lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

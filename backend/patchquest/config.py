@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -212,13 +215,48 @@ def load_config(config_path: str | None = None) -> AppConfig:
 
 
 _config: AppConfig | None = None
+_run_overrides: ContextVar[dict[str, Any] | None] = ContextVar("patchquest_run_overrides", default=None)
+
+# Only these sections may be overridden per run. Safety policy is deliberately absent: a run (or a fork
+# of one) must never be able to weaken the command policy or approval rules by changing its own config.
+OVERRIDABLE_SECTIONS = frozenset({"agent"})
+
+
+def validate_overrides(overrides: dict[str, Any]) -> dict[str, Any]:
+    """Check dotted overrides like ``{"agent.max_model_calls": 80}`` against the schema; returns them."""
+    for key, value in overrides.items():
+        section, _, name = key.partition(".")
+        if section not in OVERRIDABLE_SECTIONS or not name or "." in name:
+            raise ValueError(f"'{key}' cannot be overridden per run (allowed: agent.<setting>)")
+        if name not in AgentConfig.model_fields:
+            raise ValueError(f"unknown setting '{key}'")
+        AgentConfig.model_validate({**AgentConfig().model_dump(), name: value})
+    return dict(overrides)
+
+
+def apply_overrides(base: AppConfig, overrides: dict[str, Any]) -> AppConfig:
+    agent = base.agent.model_dump()
+    agent.update({k.partition(".")[2]: v for k, v in validate_overrides(overrides).items()})
+    return base.model_copy(update={"agent": AgentConfig(**agent)})
+
+
+@contextmanager
+def config_overrides(overrides: dict[str, Any] | None) -> Iterator[None]:
+    """Layer per-run settings over the global config for everything running in this context
+    (including threads started with ``asyncio.to_thread``). Concurrent runs do not see each other's."""
+    token = _run_overrides.set(validate_overrides(overrides) if overrides else None)
+    try:
+        yield
+    finally:
+        _run_overrides.reset(token)
 
 
 def get_config() -> AppConfig:
     global _config
     if _config is None:
         _config = load_config()
-    return _config
+    overrides = _run_overrides.get()
+    return apply_overrides(_config, overrides) if overrides else _config
 
 
 def set_config(config: AppConfig) -> None:

@@ -150,6 +150,18 @@ def _plan(run_id: str, status: str, category: RecoveryCategory, action: str, rea
     return ResumePlan(run_id, status, category, recovery_action=action, reasons=tuple(reasons), **{**defaults, **kw})
 
 
+def assess_drift(repo: str, cp: checkpoints.Checkpoint,
+                 applied_files: dict[str, dict[str, str | None]] | None = None) -> DriftReport:
+    """How the repository differs now from what ``cp`` recorded.
+
+    ``applied_files`` are files this run's own (journaled) promotion already rewrote; their new hash is the
+    expected state, not drift."""
+    recorded = fingerprint.RepoFingerprint.from_dict(cp.fingerprint)
+    if applied_files:
+        recorded = replace(recorded, files={**recorded.files, **{rel: h["new"] for rel, h in applied_files.items()}})
+    return fingerprint.classify(recorded, fingerprint.compute(repo, recorded.files), list(cp.state.get("workspace") or {}))
+
+
 def plan_resume(run_id: str) -> ResumePlan:
     with get_db() as conn:
         run = conn.execute("SELECT status, repo_path FROM runs WHERE id = ?", (run_id,)).fetchone()
@@ -201,12 +213,7 @@ def plan_resume(run_id: str) -> ResumePlan:
         return _plan(run_id, status.value, RecoveryCategory.SAFE_RETRY, "Start the run again from the beginning",
                      [*reasons, "no usable checkpoint"], side_effects=effects, **common)
 
-    touched = list(cp.state.get("workspace") or {})
-    recorded = fingerprint.RepoFingerprint.from_dict(cp.fingerprint)
-    if promotion is PromotionState.APPLIED:
-        # Our own promotion changed these files; that is the expected state, not drift.
-        recorded = replace(recorded, files={**recorded.files, **{rel: h["new"] for rel, h in files.items()}})
-    drift = fingerprint.classify(recorded, fingerprint.compute(repo, recorded.files), touched)
+    drift = assess_drift(repo, cp, applied_files=files if promotion is PromotionState.APPLIED else None)
     reasons += list(drift.reasons)
     if drift.kind in (Drift.CONFLICTING_DRIFT, Drift.UNKNOWN_DRIFT):
         return _plan(run_id, status.value, RecoveryCategory.HUMAN_CONFIRMATION_REQUIRED,

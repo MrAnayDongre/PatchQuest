@@ -8,22 +8,38 @@ dicts (no HTTP or ORM types) so any interface can serialise them.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from patchquest.agents.providers_recorded import RecordedProvider, session_name
+from patchquest.config import validate_overrides
 from patchquest.database import get_db, insert_event, now_iso
 from patchquest.domain.runs import RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
+from patchquest.persistence import checkpoints, ledger
 from patchquest.persistence.runs import transition
+from patchquest.runtime import lineage
+from patchquest.runtime.fingerprint import Drift, DriftReport
+from patchquest.runtime.replay import (
+    REPLAY_OVERRIDES,
+    ReplayMode,
+    StateReplay,
+    compare_runs,
+    comparison_payload,
+    ensure_replayable,
+    replay_state,
+)
 from patchquest.runtime.resume import (
     ConfirmationRequired,
     NotResumable,
     PromotionState,
     RecoveryCategory,
     ResumePlan,
+    assess_drift,
     plan_resume,
     revert_partial_promotion,
 )
@@ -39,6 +55,18 @@ class RunNotFound(LookupError):
 
 class RunNotActive(RuntimeError):
     pass
+
+
+class ForkError(RuntimeError):
+    pass
+
+
+class ForkBlocked(RuntimeError):
+    """The repository changed under the checkpoint; forking needs an explicit decision."""
+
+    def __init__(self, drift: DriftReport) -> None:
+        super().__init__("; ".join(drift.reasons) or drift.kind.value)
+        self.drift = drift
 
 
 def _row(r: Any) -> dict[str, Any]:
@@ -85,6 +113,7 @@ class TaskService:
         return RunStateMachine(
             run["id"], run["repo_path"], run["task"], provider=run["provider"] or "mock", model=run["model"],
             runtime_mode=run["runtime_mode"] or "local", dry_run=bool(run["dry_run"]), base_url=run.get("base_url"),
+            overrides=json.loads(run["overrides_json"]) if run.get("overrides_json") else None,
         )
 
     # --------------------------------------------------------------------- run
@@ -146,24 +175,113 @@ class TaskService:
             transition(conn, run_id, RunStatus.RUNNING, actor="resume", attempt=machine.attempt,
                        correlation_id=machine.correlation_id,
                        reason=f"resumed from checkpoint {cp.seq}" if cp else "restarted from the beginning")
+
+        def configure(m: RunStateMachine) -> None:
+            if reconciled:  # applied after restore: a checkpoint carries the flag's older value
+                m._promotion_reconciled = "applied"
+
+        self._spawn(run_id, machine, checkpoint=cp, resumed=True, configure=configure)
+        return plan
+
+    def _spawn(self, run_id: str, machine: RunStateMachine, *, checkpoint: checkpoints.Checkpoint | None = None,
+               resumed: bool = False, configure: Callable[[RunStateMachine], None] | None = None,
+               on_done: Callable[[], None] | None = None) -> None:
+        """Run ``machine`` as a background task, optionally from a checkpoint, tracked until it ends."""
         self._machines[run_id] = machine
 
         async def _go() -> None:
-            if cp is not None:
-                await machine.restore_checkpoint(cp)
-                if reconciled:  # after restore: a checkpoint carries the flag's older value
-                    machine._promotion_reconciled = "applied"
-            await machine.execute(resumed=True)
+            try:
+                if checkpoint is not None:
+                    await machine.restore_checkpoint(checkpoint)
+                if configure is not None:
+                    configure(machine)
+                await machine.execute(resumed=resumed)
+            finally:
+                if on_done is not None:
+                    on_done()
 
         task = asyncio.get_running_loop().create_task(_go())
-        self._tasks[run_id] = task
+        self._tasks[run_id] = task  # strong reference: a bare create_task() may be GC'd mid-run
 
         def _cleanup(_t: asyncio.Task) -> None:
             self._machines.pop(run_id, None)
             self._tasks.pop(run_id, None)
 
         task.add_done_callback(_cleanup)
-        return plan
+
+    # ------------------------------------------------------------- fork / replay
+    def fork(self, run_id: str, *, from_seq: int | None = None, provider: str | None = None, model: str | None = None,
+             base_url: str | None = None, overrides: dict[str, Any] | None = None,
+             accept_drift: bool = False) -> dict[str, Any]:
+        """Start a new run from one of ``run_id``'s checkpoints, optionally with another model or settings.
+
+        The parent is never modified. Raises ``ForkError`` when there is no usable checkpoint, and
+        ``ForkBlocked`` when the repository changed under the checkpoint and ``accept_drift`` is not set.
+        """
+        parent = self.get_run(run_id)
+        base_url = validate_base_url(base_url) if base_url else None
+        validate_overrides(overrides or {})  # a typo is a usage error, whatever state the repository is in
+        with get_db() as conn:
+            try:
+                cp = checkpoints.get(conn, run_id, from_seq) if from_seq is not None else checkpoints.latest_valid(conn, run_id)[0]
+            except (LookupError, checkpoints.CheckpointError) as exc:
+                raise ForkError(f"checkpoint {from_seq} cannot be used: {exc}") from exc
+        if cp is None:
+            raise ForkError("this run has no usable checkpoint to fork from")
+        drift = assess_drift(parent["repo_path"], cp)
+        if drift.kind in (Drift.CONFLICTING_DRIFT, Drift.UNKNOWN_DRIFT) and not accept_drift:
+            raise ForkBlocked(drift)
+        with get_db() as conn:
+            child_id = lineage.create_child(conn, run_id, kind="fork", parent_cp=cp, provider=provider, model=model,
+                                            base_url=base_url, overrides=overrides)
+        child = self.get_run(child_id)
+        self._spawn(child_id, self._machine_for(child), checkpoint=cp)
+        return child
+
+    def replay(self, run_id: str, mode: ReplayMode) -> StateReplay | dict[str, Any]:
+        """``STATE`` verifies the ledger and returns a report. ``MODEL``/``LIVE`` start a child run that never
+        promotes to the repository; compare it with ``compare_replay`` once it ends."""
+        if mode is ReplayMode.STATE:
+            return replay_state(run_id)
+        self.get_run(run_id)
+        child_id = str(uuid.uuid4())
+        provider: str | None = None  # live replay: the original run's own provider and model
+        model: str | None = None
+        if mode is ReplayMode.MODEL:
+            ensure_replayable(run_id)
+            provider, model = "recorded", session_name(run_id, child_id)
+        with get_db() as conn:
+            lineage.create_child(conn, run_id, kind="replay", parent_cp=None, provider=provider, model=model,
+                                 overrides=REPLAY_OVERRIDES, replay_mode=mode.value, run_id=child_id, actor="replay")
+        child = self.get_run(child_id)
+
+        def finish() -> None:
+            RecordedProvider.end_session(session_name(run_id, child_id))
+            comparison = compare_runs(run_id, child_id)
+            with get_db() as conn:
+                ledger.append(conn, child_id, "replay_completed" if comparison.matched else "replay_diverged",
+                              actor="replay", message="Matches the original run" if comparison.matched
+                              else "Differs from the original run", payload=comparison_payload(comparison))
+
+        replay_base = self._original_files(run_id)
+
+        def configure(m: RunStateMachine) -> None:
+            m.replay_base = replay_base
+
+        self._spawn(child_id, self._machine_for(child), configure=configure, on_done=finish)
+        return child
+
+    @staticmethod
+    def _original_files(run_id: str) -> dict[str, bytes | None]:
+        """What the files ``run_id`` changed looked like before it changed them (from its checkpoints)."""
+        with get_db() as conn:
+            cp, _ = checkpoints.latest_valid(conn, run_id)
+        touched = (cp.state.get("workspace") or {}) if cp else {}
+        return {rel: (base64.b64decode(v["base"]) if v["base"] is not None else None) for rel, v in touched.items()}
+
+    def lineage(self, run_id: str) -> dict[str, Any]:
+        with get_db() as conn:
+            return {"ancestry": lineage.lineage(conn, run_id), "children": lineage.children(conn, run_id)}
 
     async def run_to_completion(self, run_id: str) -> dict[str, Any]:
         self.launch(run_id)

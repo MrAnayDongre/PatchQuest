@@ -47,6 +47,7 @@ class FailureKind(StrEnum):
     CHECKPOINT_FAILURE = "CHECKPOINT_FAILURE"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     USER_CANCELLED = "USER_CANCELLED"
+    REPLAY_DIVERGED = "REPLAY_DIVERGED"
     INTERNAL_INVARIANT = "INTERNAL_INVARIANT"
 
 
@@ -146,6 +147,9 @@ SPECS: dict[FailureKind, FailureSpec] = {
     FailureKind.BUDGET_EXHAUSTED: FailureSpec(False, _S.WARNING, _O.BUDGET, "The run used up its allowed budget.",
                                               ("raise the limit and fork the run", "narrow the task")),
     FailureKind.USER_CANCELLED: FailureSpec(False, _S.INFO, _O.USER, "The run was cancelled.", ("fork it to try again",)),
+    FailureKind.REPLAY_DIVERGED: FailureSpec(False, _S.WARNING, _O.RUNTIME,
+                                             "The replay no longer matches the recorded run, so it was stopped.",
+                                             ("compare the two runs to see where they differ",)),
     FailureKind.INTERNAL_INVARIANT: FailureSpec(False, _S.CRITICAL, _O.RUNTIME,
                                                 "PatchQuest hit an internal error. Nothing was changed in your repository.",
                                                 ("export the run bundle and report it",)),

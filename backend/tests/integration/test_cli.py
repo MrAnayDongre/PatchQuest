@@ -202,3 +202,51 @@ class TestResumeCommands:
         assert budget["model_calls"]["used"] >= 2 and budget["patch_attempts"]["used"] == 1
         assert cli.main(["--config", cfg, "status", run_id]) == cli.EXIT_OK
         assert "budget model_calls" in capsys.readouterr().out
+
+
+class TestReplayForkCommands:
+    REVIEW = {"minimal_change": True, "unrelated_changes": False, "risk_notes": "", "missing_tests": [],
+              "recommendation": "approve"}
+
+    @pytest.fixture
+    def finished(self, env, capsys):
+        cfg, repo = env
+        ScriptedProvider.register("orig", {"planner": [PLAN], "coder": [edit("a - b", "a + b")], "reviewer": [self.REVIEW]})
+        assert cli.main(["--config", cfg, "run", "--repo", str(repo), "--task", "Fix add() in calc.py so it returns the sum",
+                         "--provider", "scripted", "--model", "orig", "--json"]) == cli.EXIT_OK
+        run_id = lines(capsys)[-1]["run_id"]
+        (repo / "calc.py").write_text(CALC_BUG)  # put the bug back so replays/forks have something to (not) change
+        return cfg, repo, run_id
+
+    def test_state_replay_reports_a_consistent_history(self, finished, capsys):
+        cfg, _, run_id = finished
+        assert cli.main(["--config", cfg, "replay", run_id, "--json"]) == cli.EXIT_OK
+        report = json.loads(capsys.readouterr().out)
+        assert report["ok"] and report["status_trail"] == ["running", "completed"]
+
+    def test_model_replay_matches_and_writes_nothing(self, finished, capsys):
+        cfg, repo, run_id = finished
+        assert cli.main(["--config", cfg, "replay", run_id, "--mode", "model", "--json"]) == cli.EXIT_OK
+        out = lines(capsys)
+        assert out[-1]["type"] == "comparison" and out[-1]["matched"] is True
+        assert (repo / "calc.py").read_text() == CALC_BUG
+
+    def test_fork_with_another_model_and_overrides_then_inspect_lineage(self, finished, capsys):
+        cfg, repo, run_id = finished
+        ScriptedProvider.register("alt", {"coder": [edit("a - b", "b + a")], "reviewer": [self.REVIEW]})
+        assert cli.main(["--config", cfg, "fork", run_id, "--from", "6", "--model", "alt",
+                         "--set", "agent.promote_policy=always", "--json"]) == cli.EXIT_OK
+        summary = lines(capsys)[-1]
+        assert summary["outcome"] == "applied" and (repo / "calc.py").read_text().endswith("b + a\n")
+        assert cli.main(["--config", cfg, "lineage", summary["run_id"], "--json"]) == cli.EXIT_OK
+        info = json.loads(capsys.readouterr().out)
+        assert [r["id"] for r in info["ancestry"]] == [run_id, summary["run_id"]]
+        assert info["ancestry"][1]["lineage_kind"] == "fork" and info["ancestry"][1]["parent_checkpoint_seq"] == 6
+
+    def test_bad_overrides_and_unknown_runs_are_usage_errors(self, finished, capsys):
+        cfg, _, run_id = finished
+        assert cli.main(["--config", cfg, "fork", run_id, "--set", "safety.approval_timeout_seconds=1"]) == cli.EXIT_USAGE
+        assert "cannot be overridden" in capsys.readouterr().err
+        assert cli.main(["--config", cfg, "fork", run_id, "--set", "nonsense"]) == cli.EXIT_USAGE
+        assert cli.main(["--config", cfg, "fork", "missing"]) == cli.EXIT_USAGE
+        assert cli.main(["--config", cfg, "replay", "missing"]) == cli.EXIT_USAGE

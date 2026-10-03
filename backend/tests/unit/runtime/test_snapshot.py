@@ -40,8 +40,8 @@ def test_runtime_only_members_are_not_persisted():
 
 def test_unknown_and_missing_keys_do_not_break_restore():
     b = _machine()
-    restore(b, {"ctx": {"task": "kept", "field_from_the_future": 1}, "phase_statuses": {}, "flags": {"_bogus": True}})
-    assert b.ctx.task == "kept" and not hasattr(b, "_bogus") and b.attempt == 1
+    restore(b, {"ctx": {"analysis": "kept", "field_from_the_future": 1}, "phase_statuses": {}, "flags": {"_bogus": True}})
+    assert b.ctx.analysis == "kept" and not hasattr(b, "_bogus") and b.attempt == 1
 
 
 def test_workspace_files_round_trip_as_bytes(tmp_path, monkeypatch):
