@@ -106,7 +106,9 @@ async def stream_events(access: CanRead, after_id: int = Query(0, ge=0)) -> Even
 
     async def generate():
         async for event in service.stream(access.run["id"], after_id):
-            yield {"event": event["type"], "id": str(event.get("id", "")), "data": json.dumps(event)}
+            # Unnamed events: a client receives every type through ``onmessage`` without listing them, and
+            # the ``id`` lets EventSource resume from where it dropped (``Last-Event-ID``).
+            yield {"id": str(event.get("id", "")), "data": json.dumps(event)}
 
     return EventSourceResponse(generate())
 
