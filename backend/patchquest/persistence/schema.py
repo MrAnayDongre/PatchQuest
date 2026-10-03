@@ -169,6 +169,17 @@ def _workflows(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _leases(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "runs", {
+        "queued_at": "TEXT",
+        "lease_owner": "TEXT",
+        "lease_expires_at": "TEXT",
+        "lease_epoch": "INTEGER NOT NULL DEFAULT 0",  # bumped on every claim; identifies which owner a write came from
+        "resume_note": "TEXT",  # what a deferred resume decided (e.g. "applied": the patch had already landed)
+    })
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, queued_at)")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -179,4 +190,5 @@ MIGRATIONS = [
     Migration(7, "organisations, workspaces, principals, tokens and audit log", _identity),
     CONNECTOR_MIGRATION,
     Migration(9, "workflows, runs, steps and events", _workflows),
+    Migration(10, "run queue and worker leases", _leases),
 ]

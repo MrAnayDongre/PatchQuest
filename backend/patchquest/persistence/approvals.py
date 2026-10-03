@@ -115,4 +115,9 @@ def has_grant(conn: sqlite3.Connection, run_id: str, command: str) -> bool:
 def pending(conn: sqlite3.Connection, run_id: str) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT * FROM approvals WHERE run_id = ? AND status = 'pending' "
                         "AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at", (run_id, ledger.now_iso())).fetchall()
-    return [{k: r[k] for k in r.keys()} for r in rows]
+    out = []
+    for r in rows:
+        d = {k: r[k] for k in r.keys()}
+        d["grantable"] = bool(r["command"]) and r["type"] == "command" and SideEffect(r["side_effect"] or SideEffect.UNKNOWN) in GRANTABLE
+        out.append(d)
+    return out

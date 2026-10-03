@@ -11,6 +11,7 @@ from enum import StrEnum
 
 class RunStatus(StrEnum):
     CREATED = "created"
+    QUEUED = "queued"  # waiting for a worker to claim it
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
     CANCEL_REQUESTED = "cancel_requested"
@@ -23,12 +24,13 @@ class RunStatus(StrEnum):
 _S = RunStatus
 
 TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
-    _S.CREATED: frozenset({_S.RUNNING, _S.CANCELLED, _S.FAILED}),
+    _S.CREATED: frozenset({_S.RUNNING, _S.QUEUED, _S.CANCELLED, _S.FAILED}),
+    _S.QUEUED: frozenset({_S.RUNNING, _S.CANCELLED, _S.FAILED}),
     _S.RUNNING: frozenset({_S.WAITING_APPROVAL, _S.CANCEL_REQUESTED, _S.COMPLETED, _S.FAILED, _S.CANCELLED, _S.INTERRUPTED}),
     _S.WAITING_APPROVAL: frozenset({_S.RUNNING, _S.CANCEL_REQUESTED, _S.CANCELLED, _S.FAILED, _S.INTERRUPTED}),
     # A cancel can lose the race against the last phase: finishing is then the truthful outcome.
     _S.CANCEL_REQUESTED: frozenset({_S.CANCELLED, _S.COMPLETED, _S.FAILED, _S.INTERRUPTED}),
-    _S.INTERRUPTED: frozenset({_S.RUNNING, _S.CANCELLED, _S.FAILED}),
+    _S.INTERRUPTED: frozenset({_S.RUNNING, _S.QUEUED, _S.CANCELLED, _S.FAILED}),
     _S.COMPLETED: frozenset(),
     _S.FAILED: frozenset(),
     _S.CANCELLED: frozenset(),

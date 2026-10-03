@@ -74,7 +74,7 @@ async def create_run(req: CreateRunRequest, request: Request, principal: Current
             repo_path=req.repo_path, task=req.task, provider=req.provider or "mock", model=req.model,
             runtime_mode=req.runtime_mode or "local", model_profile=req.model_profile,
             memory_mode=req.memory_mode or "repo", allow_network=req.allow_network, dry_run=req.dry_run,
-            base_url=req.base_url, workspace_id=workspace_id, created_by=principal.actor,
+            base_url=req.base_url, workspace_id=workspace_id, created_by=principal.actor, overrides=req.overrides or None,
         )
     except (RepoPathError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -84,8 +84,9 @@ async def create_run(req: CreateRunRequest, request: Request, principal: Current
 
 
 @router.get("", response_model=list[RunResponse])
-async def list_runs(principal: CurrentPrincipal) -> list[RunResponse]:
-    return [_to_response(r) for r in get_service().list_runs(50, principal.workspaces_with(Permission.RUN_READ))]
+async def list_runs(principal: CurrentPrincipal, limit: int = Query(50, ge=1, le=200),
+                    before: str | None = Query(None, description="created_at of the last run seen, to page backwards")) -> list[RunResponse]:
+    return [_to_response(r) for r in get_service().list_runs(limit, principal.workspaces_with(Permission.RUN_READ), before)]
 
 
 @router.get("/{run_id}", response_model=RunResponse)

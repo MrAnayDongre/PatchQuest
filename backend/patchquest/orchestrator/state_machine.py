@@ -171,6 +171,7 @@ class RunStateMachine:
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
         self._cancel_flag = threading.Event()  # the same signal for code running in worker threads (subprocesses)
+        self._abandoned = False  # another worker owns the run now: stop quietly, write nothing
         self._critical = False  # True while an operation that must not be interrupted half-way is running
         self.attempt = 1  # incremented by resume; every event carries it
         self.correlation_id = uuid.uuid4().hex  # groups the events of this execution
@@ -189,17 +190,28 @@ class RunStateMachine:
         for event in self._approval_events.values():  # unblock anything waiting on a human
             event.set()
 
+    def abandon(self) -> None:
+        """Stop executing because this process no longer owns the run (its worker lease was lost). Unlike
+        ``cancel`` this records nothing: the run belongs to someone else and its state is theirs to write."""
+        self._abandoned = True
+        self._cancelled.set()
+        self._cancel_flag.set()
+        for event in self._approval_events.values():
+            event.set()
+
     def _move(self, target: RunStatus, reason: str, *, actor: str = "runtime",
               fields: dict[str, Any] | None = None) -> bool:
         """Change the run's status through the validated table. False when that is no longer legal
         (e.g. the run already finished), which callers treat as 'nothing to do'."""
+        if self._abandoned:
+            return False
         try:
             with get_db() as conn:
                 done = transition(conn, self.run_id, target, actor=actor, reason=reason, attempt=self.attempt,
                                   correlation_id=self.correlation_id, fields=fields)
             event_bus.emit_nowait(self.run_id, {
                 "id": done.event_id, "event_uid": done.event_uid, "type": "run_state_changed", "run_id": self.run_id,
-                "phase": None, "status": target.value, "message": reason,
+                "phase": None, "status": target.value, "message": reason, "created_at": ledger.now_iso(),
                 "payload": {"from": done.previous.value, "to": target.value}})
             return True
         except IllegalTransition as exc:
@@ -219,6 +231,8 @@ class RunStateMachine:
                     continue  # settled before the checkpoint this run was resumed from
                 if self._cancelled.is_set():
                     await self._fail_run("Run cancelled", status="cancelled")
+                    return
+                if self._abandoned:
                     return
                 self._enforce(budget.BudgetKind.WALL_TIME)
                 if self._blocked and phase not in _PHASES_AFTER_BLOCK:
@@ -273,6 +287,8 @@ class RunStateMachine:
         the run keeps going, it is just resumable only from an earlier checkpoint."""
         from patchquest.runtime import fingerprint
 
+        if self._abandoned:
+            return
         try:
             state = await asyncio.to_thread(snapshot.capture, self)
             ws = self._workspace
@@ -857,12 +873,16 @@ class RunStateMachine:
 
     # ------------------------------------------------------------- run lifecycle
     async def _complete_run(self) -> None:
+        if self._abandoned:
+            return
         self._move(RunStatus.COMPLETED, "all phases finished",
                    fields={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
         await self._emit("run_completed", message="Run completed successfully",
                          payload={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
 
     async def _fail_run(self, reason: str, status: str = "failed") -> None:
+        if self._abandoned:
+            return
         try:
             from patchquest.reports.final_report import generate_report
             report = generate_report(self.ctx)
@@ -896,6 +916,8 @@ class RunStateMachine:
     async def _emit(self, event_type: str, phase: str | None = None,
                     status: str | None = None, message: str | None = None,
                     payload: dict[str, Any] | None = None) -> None:
+        if self._abandoned:
+            return
         with get_db() as conn:
             event_id, event_uid = ledger.append(
                 conn, self.run_id, event_type, phase=phase, status=status, message=message, payload=payload,

@@ -22,6 +22,7 @@ class CreateRunRequest(BaseModel):
     allow_network: bool = False
     dry_run: bool = False
     workspace_id: str | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)  # per-run agent.* settings, e.g. {"agent.max_model_calls": 80}
 
 
 class ApprovalDecision(BaseModel):

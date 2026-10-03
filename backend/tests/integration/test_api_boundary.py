@@ -208,3 +208,47 @@ class TestApprovalEndpoints:
             ok = await c.post(f"/api/runs/api-run/approvals/{aid}", json={"decision": "DENY"},
                               headers={"Authorization": "Bearer s3cret-token-value"})
             assert ok.status_code == 200
+
+
+class TestRunApiExtras:
+    @pytest.mark.asyncio
+    async def test_overrides_at_creation_are_validated_and_stored(self, tmp_path):
+        repo = tmp_path / "r"
+        repo.mkdir()
+        async with client() as c:
+            ok = await c.post("/api/runs", json={"repo_path": str(repo), "task": "read only: explain", "overrides": {"agent.max_model_calls": 7}})
+            assert ok.status_code == 200
+            bad = await c.post("/api/runs", json={"repo_path": str(repo), "task": "t", "overrides": {"safety.approval_timeout_seconds": 1}})
+            assert bad.status_code == 400 and "cannot be overridden" in bad.json()["detail"]
+        with get_db() as conn:
+            assert conn.execute("SELECT overrides_json FROM runs WHERE id = ?", (ok.json()["id"],)).fetchone()[0] == '{"agent.max_model_calls": 7}'
+
+    @pytest.mark.asyncio
+    async def test_listing_pages_backwards_with_a_cursor(self):
+        from tests.support.db import insert_run
+
+        for i in range(5):
+            insert_run(f"p{i}")
+            with get_db() as conn:
+                conn.execute("UPDATE runs SET created_at = ? WHERE id = ?", (f"2026-01-0{i + 1}T00:00:00+00:00", f"p{i}"))
+        async with client() as c:
+            first = (await c.get("/api/runs?limit=2")).json()
+            assert [r["id"] for r in first] == ["p4", "p3"]
+            second = (await c.get(f"/api/runs?limit=2&before={first[-1]['created_at']}")).json()
+            assert [r["id"] for r in second] == ["p2", "p1"]
+            assert (await c.get("/api/runs?limit=0")).status_code == 422 and (await c.get("/api/runs?limit=999")).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_pending_approvals_say_whether_they_can_be_remembered(self):
+        from patchquest.domain.effects import SideEffect
+        from patchquest.persistence import approvals
+        from tests.support.db import insert_run
+
+        insert_run("g1")
+        with get_db() as conn:
+            safe = approvals.request(conn, "g1", kind="command", reason="r", command="touch a", side_effect=SideEffect.WORKSPACE_WRITE, timeout_s=60)
+            risky = approvals.request(conn, "g1", kind="command", reason="r", command="curl x", side_effect=SideEffect.EXTERNAL_WRITE, timeout_s=60)
+            promote = approvals.request(conn, "g1", kind="promote_patch", reason="r", side_effect=SideEffect.WORKSPACE_WRITE, timeout_s=60)
+        async with client() as c:
+            grantable = {a["id"]: a["grantable"] for a in (await c.get("/api/runs/g1/approvals")).json()}
+        assert grantable == {safe: True, risky: False, promote: False}

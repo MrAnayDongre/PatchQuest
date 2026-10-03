@@ -96,20 +96,22 @@ class TaskService:
         base_url: str | None = None,
         workspace_id: str = LOCAL_WORKSPACE_ID,
         created_by: str | None = None,
+        overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path."""
         repo_path = validate_repo_path(repo_path)
         base_url = validate_base_url(base_url)
+        overrides_json = json.dumps(validate_overrides(overrides)) if overrides else None
         run_id = str(uuid.uuid4())
         now = now_iso()
         with get_db() as conn:
             conn.execute(
                 """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile,
                    memory_mode, runtime_mode, allow_network, dry_run, base_url, created_at, updated_at,
-                   workspace_id, created_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   workspace_id, created_by, overrides_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, repo_path, task, "created", provider, model, model_profile, memory_mode,
-                 runtime_mode, int(allow_network), int(dry_run), base_url, now, now, workspace_id, created_by),
+                 runtime_mode, int(allow_network), int(dry_run), base_url, now, now, workspace_id, created_by, overrides_json),
             )
             insert_event(conn, run_id, "run_created", message=f"Run created: {task[:100]}", actor=created_by or "runtime")
         return self.get_run(run_id)
@@ -338,12 +340,18 @@ class TaskService:
             raise RunNotFound(run_id)
         return _row(r)
 
-    def list_runs(self, limit: int = 50, workspace_ids: list[str] | None = None) -> list[dict[str, Any]]:
-        """Newest first. ``workspace_ids`` restricts to those workspaces (None: all; [] : none)."""
-        sql, params = "SELECT * FROM runs", []
+    def list_runs(self, limit: int = 50, workspace_ids: list[str] | None = None, before: str | None = None) -> list[dict[str, Any]]:
+        """Newest first. ``workspace_ids`` restricts to those workspaces (None: all; []: none). ``before`` is the
+        ``created_at`` of the last run already seen, to page backwards."""
+        clauses: list[str] = []
+        params: list[Any] = []
         if workspace_ids is not None:
-            sql += f" WHERE workspace_id IN ({','.join('?' * len(workspace_ids)) or 'NULL'})"
-            params = list(workspace_ids)
+            clauses.append(f"workspace_id IN ({','.join('?' * len(workspace_ids)) or 'NULL'})")
+            params += workspace_ids
+        if before:
+            clauses.append("created_at < ?")
+            params.append(before)
+        sql = "SELECT * FROM runs" + (f" WHERE {' AND '.join(clauses)}" if clauses else "")
         with get_db() as conn:
             rows = conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", [*params, limit]).fetchall()
         return [_row(r) for r in rows]
