@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from patchquest import __version__
 from patchquest.config import get_config
 from patchquest.database import get_db, now_iso
+from patchquest.domain import budget
 from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
 from patchquest.domain.runs import IllegalTransition, RunStatus
 from patchquest.orchestrator import snapshot
@@ -150,6 +152,7 @@ class RunStateMachine:
         self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._promotion_reconciled: str | None = None  # "applied": resume found promotion had already landed
+        self._attempt_clock = time.monotonic()  # wall time is charged to the budget in ticks
         self._failure: Failure | None = None  # the first thing that went wrong; becomes the run's failure kind
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
@@ -196,6 +199,7 @@ class RunStateMachine:
                 if self._cancelled.is_set():
                     await self._fail_run("Run cancelled", status="cancelled")
                     return
+                self._enforce(budget.BudgetKind.WALL_TIME)
                 if self._blocked and phase not in _PHASES_AFTER_BLOCK:
                     await self._skip(phase, "Skipped: an earlier phase is blocked")
                     await self._checkpoint(phase)
@@ -216,6 +220,24 @@ class RunStateMachine:
         finally:
             if self._workspace is not None:
                 await asyncio.to_thread(self._workspace.cleanup)
+
+    # ------------------------------------------------------------------ budgets
+    def _tick(self) -> None:
+        now = time.monotonic()
+        self.ctx.wall_seconds += now - self._attempt_clock
+        self._attempt_clock = now
+
+    def budget_lines(self) -> list[budget.BudgetLine]:
+        self._tick()
+        return budget.snapshot(self.ctx, get_config().agent)
+
+    def _enforce(self, *kinds: budget.BudgetKind) -> None:
+        """Stop the run (BUDGET_EXHAUSTED) if any of the budgets about to be spent is used up."""
+        self._tick()
+        line = budget.exhausted(self.ctx, get_config().agent, among=kinds)
+        if line is not None:
+            raise PatchQuestError(FailureKind.BUDGET_EXHAUSTED,
+                                  f"{line.kind.value} budget exhausted ({line.used:g} of {line.limit:g})")
 
     # -------------------------------------------------------------- checkpoints
     async def _checkpoint(self, phase: Phase) -> None:
@@ -240,11 +262,13 @@ class RunStateMachine:
                              message=f"Could not save a checkpoint after {phase.value}: {exc}")
             return
         await self._emit("checkpoint_created", phase=phase.value, message=f"Checkpoint {cp.seq} saved after {phase.value}",
-                         payload={"seq": cp.seq, "event_cursor": cp.event_cursor})
+                         payload={"seq": cp.seq, "event_cursor": cp.event_cursor,
+                                  "budget": [line.to_dict() for line in self.budget_lines()]})
 
     async def restore_checkpoint(self, cp: checkpoints.Checkpoint) -> None:
         """Load a checkpoint into this (fresh) machine and rebuild the shadow workspace it described."""
         files = snapshot.restore(self, cp.state)
+        self._attempt_clock = time.monotonic()  # wall time accrued before the crash is in the checkpoint
         if files is not None:
             ws = await self._ws()
             await asyncio.to_thread(ws.adopt, {r: v["base"] for r, v in files.items()},
@@ -336,6 +360,7 @@ class RunStateMachine:
         """Run ``command`` in the workspace through the policy gate. Never raises."""
         from patchquest.tools.command_risk import RiskLevel, classify
 
+        self._enforce(budget.BudgetKind.COMMANDS)
         ws = await self._ws()
         decision = classify(command, str(ws.path))
         safe_cmd = redact_secrets(command)
@@ -501,6 +526,7 @@ class RunStateMachine:
 
         from patchquest.agents.roles import run_patch_role
         output = await run_patch_role(self.ctx)
+        self.ctx.patch_attempts += 1
         applied, error = await self._apply_model_output(output)
         if not applied and not error and not _says_no_change(output):
             # A mutating task came back with no edits and no explanation. Ask once more, naming the
@@ -508,6 +534,7 @@ class RunStateMachine:
             await self._emit("patch_empty", phase="patching",
                              message="Model proposed no edits for a mutating task; asking once more")
             output = await run_patch_role(self.ctx, hint=_EMPTY_PATCH_HINT)
+            self.ctx.patch_attempts += 1
             applied, error = await self._apply_model_output(output)
             if not applied and not error and not _says_no_change(output):
                 self._no_patch = True
@@ -522,6 +549,7 @@ class RunStateMachine:
             await self._emit("patch_retry", phase="patching", message=f"Patch did not apply; retry {attempt}/{attempts}",
                              payload={"error": error[:500]})
             output = await run_patch_role(self.ctx, hint=await self._apply_failure_hint(error))
+            self.ctx.patch_attempts += 1
             applied, error = await self._apply_model_output(output)
         if error:
             await self._emit("patch_rejected", phase="patching", message=f"Patch rejected: {error}")

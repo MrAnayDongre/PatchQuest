@@ -166,6 +166,8 @@ class AgentConfig(BaseModel):
     max_patch_attempts: int = 3
     max_total_tokens: int = 0  # 0 = unlimited
     max_retries: int = 10  # transient-failure retries per run, across every operation (0 = unlimited)
+    max_wall_seconds: int = 3600  # active time per run, summed across resumes (0 = unlimited)
+    max_commands: int = 60  # commands a run may execute (0 = unlimited)
     # auto: ask for constrained (JSON-schema) output where the engine supports it, and stop asking for an
     #       endpoint+model once it misbehaves (e.g. loops on whitespace until the token cap).
     # off: never constrain. schema: always constrain, never fall back.

@@ -201,10 +201,14 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         runs = svc.list_runs(args.limit)
     if args.json:
-        _emit_json(runs)
+        _emit_json([{**r, "budget": svc.budget(r["id"])} for r in runs] if args.run_id else runs)
         return EXIT_OK
     for r in runs:
-        print(f"{r['id'][:8]}  {r['status']:<11} {(r.get('outcome') or '-'):<11} {(r.get('verdict') or '-'):<10} {r['task'][:60]}")
+        print(f"{r['id'][:8]}  {r['status']:<16} {(r.get('outcome') or '-'):<11} {(r.get('verdict') or '-'):<10} {r['task'][:60]}")
+    if args.run_id:
+        for line in svc.budget(args.run_id):
+            limit = "unlimited" if not line["limit"] else f"{line['limit']:g}"
+            print(f"  budget {line['kind']:<14} {line['used']:g} / {limit}{'  EXHAUSTED' if line['exhausted'] else ''}")
     return EXIT_OK
 
 

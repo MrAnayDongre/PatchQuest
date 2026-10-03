@@ -101,6 +101,16 @@ class TaskService:
 
         task.add_done_callback(_cleanup)
 
+    def budget(self, run_id: str) -> list[dict[str, Any]]:
+        """Budget consumption: live for an active run, else as of the run's last checkpoint."""
+        machine = self._machines.get(run_id)
+        if machine is not None:
+            return [line.to_dict() for line in machine.budget_lines()]
+        with get_db() as conn:
+            row = conn.execute("SELECT payload_json FROM run_events WHERE run_id = ? AND type = 'checkpoint_created' "
+                               "ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
+        return (json.loads(row["payload_json"]).get("budget") or []) if row and row["payload_json"] else []
+
     def resume(self, run_id: str, *, accept_drift: bool = False, rollback: bool = False) -> ResumePlan:
         """Continue an interrupted run after the safety checks in ``plan_resume``.
 

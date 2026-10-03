@@ -153,5 +153,7 @@ class RunContext:
     model_calls: int = 0
     tokens_used: int = 0
     retries: int = 0
+    wall_seconds: float = 0.0  # active time, accumulated across attempts
+    patch_attempts: int = 0
     # Set by the state machine so roles can publish timeline events without importing it.
     event_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = field(default=None, repr=False, compare=False)

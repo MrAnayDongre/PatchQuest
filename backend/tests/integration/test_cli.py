@@ -194,3 +194,11 @@ class TestResumeCommands:
         cutoff = events[3]["id"]
         assert cli.main(["--config", cfg, "events", run_id, "--after", str(cutoff), "--json"]) == cli.EXIT_OK
         assert [e["id"] for e in lines(capsys)] == [e["id"] for e in events if e["id"] > cutoff]
+
+    def test_status_shows_budget_consumption_even_for_an_interrupted_run(self, crashed, capsys):
+        cfg, _, run_id = crashed
+        assert cli.main(["--config", cfg, "status", run_id, "--json"]) == cli.EXIT_OK
+        budget = {b["kind"]: b for b in json.loads(capsys.readouterr().out)[0]["budget"]}
+        assert budget["model_calls"]["used"] >= 2 and budget["patch_attempts"]["used"] == 1
+        assert cli.main(["--config", cfg, "status", run_id]) == cli.EXIT_OK
+        assert "budget model_calls" in capsys.readouterr().out

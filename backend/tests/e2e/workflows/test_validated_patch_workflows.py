@@ -439,3 +439,59 @@ class TestFailureKinds:
         retries = [e for e in fetch_events(rid) if e["type"] == "retry_scheduled"]
         assert len(retries) == 2 and retries[0]["payload"]["failure"]["kind"] == "MODEL_TIMEOUT"
         assert sm.ctx.retries == 2
+
+
+class TestBudgets:
+    @staticmethod
+    def limited(**limits):
+        cfg = AppConfig()
+        cfg.safety.approval_timeout_seconds = 0
+        for name, value in limits.items():
+            setattr(cfg.agent, name, value)
+        set_config(cfg)
+
+    @pytest.mark.asyncio
+    async def test_checkpoints_carry_the_budget_and_it_matches_what_was_spent(self, repo):
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
+        last = [e for e in fetch_events(rid) if e["type"] == "checkpoint_created"][-1]["payload"]["budget"]
+        by_kind = {b["kind"]: b for b in last}
+        assert by_kind["model_calls"]["used"] == sm.ctx.model_calls > 0
+        assert by_kind["patch_attempts"]["used"] == 1 and by_kind["commands"]["used"] == len(sm.ctx.commands_run) > 0
+        assert by_kind["wall_time_s"]["used"] > 0
+
+    @pytest.mark.asyncio
+    async def test_command_budget_stops_the_run(self, repo):
+        self.limited(max_commands=1)  # the plan names two test commands; the second one trips the limit
+        two_commands = PLAN | {"test_commands": [PLAN["test_commands"][0]] * 2}
+        sm, rid = await run_scripted(repo, {"planner": [two_commands], "coder": [FIX]})
+        assert run_row(rid)["failure_kind"] == "BUDGET_EXHAUSTED"
+        assert "commands budget exhausted" in next(e for e in fetch_events(rid) if e["type"] == "phase_failed")["message"]
+        assert (repo / "calc.py").read_text() == CALC_BUG  # stopped before promotion
+
+    @pytest.mark.asyncio
+    async def test_wall_time_budget_stops_the_run_between_phases(self, repo):
+        self.limited(max_wall_seconds=1)
+        import time
+
+        def slow_plan(_messages):
+            time.sleep(1.1)
+            return PLAN
+
+        sm, rid = await run_scripted(repo, {"planner": [slow_plan], "coder": [FIX]})
+        assert run_row(rid)["failure_kind"] == "BUDGET_EXHAUSTED" and "wall_time_s" in run_row_error(rid)
+
+    @pytest.mark.asyncio
+    async def test_wall_time_is_cumulative_across_a_crash_and_resume(self, repo):
+        from tests.support import after_event, crash_run, resume_run
+
+        rid = await crash_run(repo, {"planner": [PLAN], "coder": [FIX], "reviewer": [{
+            "minimal_change": True, "unrelated_changes": False, "risk_notes": "", "missing_tests": [],
+            "recommendation": "approve"}]}, after_event("checkpoint_created", phase="patching"))
+        await resume_run(rid)
+        checkpoints_ = [e["payload"]["budget"] for e in fetch_events(rid) if e["type"] == "checkpoint_created"]
+        first, wall = ({b["kind"]: b["used"] for b in lines} for lines in (checkpoints_[0], checkpoints_[-1]))
+        assert wall["wall_time_s"] >= first["wall_time_s"] and wall["model_calls"] >= 2  # carried over, not reset
+
+
+def run_row_error(run_id):
+    return " ".join(e["message"] or "" for e in fetch_events(run_id) if e["type"] in ("phase_failed", "run_failed"))
