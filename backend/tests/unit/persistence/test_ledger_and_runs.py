@@ -208,7 +208,7 @@ class TestMigrations:
         init_db()
         init_db()
         with get_db() as conn:
-            assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == LATEST
+            assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(MIGRATIONS)
 
     def test_fresh_database_has_no_backup(self):
         assert not list(get_db_path().parent.glob("*.bak"))
