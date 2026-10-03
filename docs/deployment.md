@@ -4,7 +4,7 @@
 |---|---|---|
 | **A. Local** | one process on a laptop: `patchquest run`, or `patchquest serve` + UI. SQLite in `~/.patchquest`. | implemented, tested |
 | **B. Single host, queued** | API container(s) + worker container(s) sharing one SQLite volume. Runs survive a worker crash. | implemented, tested (real SIGKILL, real containers) |
-| **C. Team server (PostgreSQL)** | PostgreSQL + API + workers on one or several hosts that can reach the database. | implemented; **whole test suite passes on PostgreSQL 16**; containers not yet exercised end to end (see below) |
+| **C. Team server (PostgreSQL)** | PostgreSQL + API + workers on one or several hosts that can reach the database. | implemented; **whole test suite passes on PostgreSQL 16**; API + 2 workers + PostgreSQL exercised in real containers incl. a killed worker (see below) |
 | **D. At scale** | object storage for artifacts, SSO, per-tenant quotas, TLS | **not implemented** |
 
 Use the words precisely: mode B is *tested* and *load-tested at the control-plane level* ([benchmarks](benchmarks.md)); nothing
@@ -48,6 +48,12 @@ patchquest serve --host 0.0.0.0 &                      # API (PATCHQUEST_QUEUE_M
 patchquest worker                                      # run on as many hosts as you like
 ```
 `docker compose -f docker-compose.server.yml up -d --scale worker=3` does the same with a PostgreSQL container.
+
+**Verified in real containers (2026-10-03):** the image built, `admin init` ran against the PostgreSQL container, an API and 2 workers came up healthy,
+the repository was registered through the API, 30 runs (mock model) completed, then 150 more were queued and `docker kill` stopped one worker mid-drain:
+every run still completed (one was recovered from the killed worker), no run completed twice, and none was lost. That test found a real gap - a
+read-only run in a plain folder was left `interrupted` because there was nothing to compare - fixed (read-only runs resume without a drift check).
+Not verified in containers: TLS, a second host, real model/test workloads.
 `PATCHQUEST_DATABASE_SCHEMA` namespaces an install inside a shared database.
 
 - **One code path.** SQLite and PostgreSQL run the same persistence code; `dbpg.py` translates the few dialect

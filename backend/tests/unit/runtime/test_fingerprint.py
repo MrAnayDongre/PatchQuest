@@ -113,3 +113,15 @@ def test_watch_paths_cannot_escape_the_repo(tmp_path):
     repo = _repo(tmp_path)
     (tmp_path / "secret.txt").write_text("s")
     assert compute(str(repo), ["../secret.txt"]).files == {"../secret.txt": None}
+
+
+async def test_a_read_only_run_in_an_uncomparable_repository_still_resumes_automatically(tmp_path):
+    """Found by killing a worker container mid-batch: a read-only run was left 'interrupted' because a plain folder had nothing to compare."""
+    from patchquest.runtime.resume import RecoveryCategory, plan_resume
+    from tests.support import crash_run, fetch_events
+
+    (tmp_path / "a.py").write_text("def a():\n    return 1\n")
+    run_id = await crash_run(tmp_path, {}, lambda e: e["type"] == "checkpoint_created", task="read only: explain the repo")
+    assert fetch_events(run_id)
+    plan = plan_resume(run_id)
+    assert plan.category is RecoveryCategory.SAFE_RESUME and any("read-only run" in r for r in plan.reasons)

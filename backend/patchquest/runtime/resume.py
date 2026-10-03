@@ -215,6 +215,12 @@ def plan_resume(run_id: str) -> ResumePlan:
 
     drift = assess_drift(repo, cp, applied_files=files if promotion is PromotionState.APPLIED else None)
     reasons += list(drift.reasons)
+    if drift.kind is Drift.UNKNOWN_DRIFT and (cp.state.get("ctx") or {}).get("read_only") is True:
+        # A read-only run writes nothing, so there is no change to protect from: not being able to compare the repository
+        # must not hold up recovering it (a person is only needed when something could be overwritten).
+        reasons.append("read-only run: nothing will be written, so unknown repository state does not block resuming")
+        return _plan(run_id, status.value, RecoveryCategory.SAFE_RESUME, f"Continue from phase '{common['next_phase']}'",
+                     reasons, side_effects=effects, drift=drift, **common)
     if drift.kind in (Drift.CONFLICTING_DRIFT, Drift.UNKNOWN_DRIFT):
         return _plan(run_id, status.value, RecoveryCategory.HUMAN_CONFIRMATION_REQUIRED,
                      "Review the changes made while the run was down, then confirm; promotion still refuses "
