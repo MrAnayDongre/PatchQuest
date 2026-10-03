@@ -6,7 +6,7 @@ Measured on one machine, 2026-10-03, branch `anay/core-hardening`. Nothing here 
 |---|---|
 | `ruff check .` / `mypy patchquest` | clean / no issues in 239 files |
 | Backend suite, SQLite | 1807 passed, 18 skipped |
-| Backend suite, PostgreSQL 16 | 1816 passed, 8 skipped, 1 failed on the full run (a `%` in a SQL literal; fixed in `dbpg.py`, the failing test and `tests/server` re-run green: 25 passed). A full PostgreSQL re-run after the fix was not repeated. |
+| Backend suite, PostgreSQL 16 | 1817 passed, 8 skipped (after fixing one `%`-in-literal failure found by the first run) |
 | Line coverage (`pytest --cov=patchquest`, SQLite) | 86% of 18,393 statements |
 | Frontend | 327 tests, typecheck and production build pass; browser smoke (`npm run smoke`) |
 | Recovery | real SIGKILL tests (API and workers, SQLite and PostgreSQL); container worker-kill run, once, by hand |
