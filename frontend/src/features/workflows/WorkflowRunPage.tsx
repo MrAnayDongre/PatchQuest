@@ -5,7 +5,7 @@ import { CodeBlock, Timeline } from '../../design/data'
 import { Callout, Dialog, useToast } from '../../design/overlay'
 import { Badge, Button, Card, CardHeader, Skeleton, StatusDot } from '../../design/primitives'
 import { usePolling } from '../../hooks/useAsync'
-import { relativeTime } from '../../lib/format'
+import { actorLabel, relativeTime } from '../../lib/format'
 import { PERMISSION_COPY } from '../../lib/workflow/copy'
 import { ensureLayout, layoutFrom } from '../../lib/workflow/layout'
 import { approvalMessage, describeWfEvent, isRunTerminal, nodeVisuals, pendingApprovals, runStatusLabel, runStatusTone, uncertainSteps, VISUAL_COPY, visualOf, waitingExplanation, type WfRun, type WfStep } from '../../lib/workflow/run'
@@ -30,7 +30,7 @@ function StepRow({ step }: { step: WfStep }) {
         {step.child_run_id && <a href={`#/runs/${encodeURIComponent(step.child_run_id)}`}>Open agent run</a>}
       </div>
       {step.status === 'waiting' && <p className="ui-muted">{waitingExplanation(step)}{step.wake_at ? ` It gives up ${relativeTime(step.wake_at)}.` : ''}</p>}
-      {step.decision && <p className="ui-muted">Answered: {step.decision}{step.decided_by ? ` by ${step.decided_by}` : ''}.</p>}
+      {step.decision && <p className="ui-muted">Answered: {step.decision}{step.decided_by ? ` by ${actorLabel(step.decided_by)}` : ''}.</p>}
       {step.error && <p className="ui-text--danger ui-wrap">{step.error}</p>}
       {out && (
         <details>
@@ -65,7 +65,7 @@ export default function WorkflowRunPage({ id }: { id: string }) {
           const w = await getWorkflow(r.workflow_id)
           setDef(w.definition)
           setName(`${w.name} · version ${w.version}`)
-          setFit(n => n + 1)
+          requestAnimationFrame(() => setFit(n => n + 1)) // after the canvas has its size
         } catch {
           // the graph is a nicety; steps and events still show
         }
@@ -137,7 +137,7 @@ export default function WorkflowRunPage({ id }: { id: string }) {
         </div>
         <ul className="run-header__meta">
           <li>Started {relativeTime(run.created_at)}</li>
-          {run.created_by && <li>by {run.created_by}</li>}
+          {run.created_by && <li>by {actorLabel(run.created_by)}</li>}
           {run.completed_at && <li>Finished {relativeTime(run.completed_at)}</li>}
           {def && <li><a href={`#/workflows/${encodeURIComponent(run.workflow_id)}`}>Open the workflow</a></li>}
         </ul>
