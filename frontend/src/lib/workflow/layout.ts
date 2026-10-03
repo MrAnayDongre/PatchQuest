@@ -1,4 +1,4 @@
-import type { Pos, Rect, WfDef } from './types'
+import { asRecord, type Pos, type Rect, type WfDef } from './types'
 
 export const NODE_W = 208
 export const NODE_H = 76
@@ -120,4 +120,35 @@ export function edgePath(a: Pos, b: Pos): string {
 /** Midpoint of the curve, where the label sits. */
 export function edgeMid(a: Pos, b: Pos): Pos {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+export const LAYOUT_LIMIT = 100000
+
+/** Stored positions from a definition's `layout`, ignoring anything that is not a finite, in-range x/y pair. */
+export function layoutFrom(def: WfDef): Record<string, Pos> | undefined {
+  const raw = asRecord(def.layout)
+  const out: Record<string, Pos> = {}
+  for (const [id, v] of Object.entries(raw)) {
+    const p = asRecord(v)
+    if (typeof p.x === 'number' && typeof p.y === 'number' && Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x) <= LAYOUT_LIMIT && Math.abs(p.y) <= LAYOUT_LIMIT) {
+      out[id] = { x: p.x, y: p.y }
+    }
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * The definition as it is saved and exported: `layout` holds exactly one position per existing node (entries for
+ * deleted nodes are pruned, values are kept inside the server's limits). Everything else is untouched.
+ */
+export function withLayout(def: WfDef, positions: Record<string, Pos>): WfDef {
+  const layout: Record<string, Pos> = {}
+  const clamp = (v: number) => Math.max(-LAYOUT_LIMIT, Math.min(LAYOUT_LIMIT, Math.round(v)))
+  for (const n of def.nodes) {
+    const p = positions[n.id]
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) layout[n.id] = { x: clamp(p.x), y: clamp(p.y) }
+  }
+  const { layout: _old, ...rest } = def
+  void _old
+  return Object.keys(layout).length ? { ...rest, layout } : (rest as WfDef)
 }

@@ -132,8 +132,9 @@ describe('builder', () => {
     expect(body.definition.nodes.map(n => n.id)).toEqual(['agent', 'approve', 'done'])
     expect(body.definition.nodes[0].config).toMatchObject({ task: 'Fix {{trigger.type}}' })
     expect(body.definition.edges).toEqual([{ from: 'agent', to: 'approve' }, { from: 'approve', to: 'done', when: 'approved' }])
-    // node positions are editor state and never leave the browser
-    expect(JSON.stringify(body.definition)).not.toMatch(/"(x|y|position)"/)
+    // node positions travel only in the server-side `layout` map, one {x, y} per node, never on the nodes
+    expect(Object.keys(body.definition.layout ?? {}).sort()).toEqual(['agent', 'approve', 'done'])
+    expect(JSON.stringify(body.definition.nodes)).not.toMatch(/"(x|y|position)"/)
     await waitFor(() => expect(window.location.hash).toBe('#/workflows/wf_new'))
   })
 
@@ -218,7 +219,9 @@ describe('builder', () => {
     await waitFor(() => expect(nodeEl('review')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
     const code = await screen.findByLabelText('issue-to-proposal.json')
-    expect(JSON.parse(code.textContent ?? '')).toEqual(def)
+    const { layout, ...exported } = JSON.parse(code.textContent ?? '')
+    expect(exported).toEqual(def)
+    expect(Object.keys(layout).sort()).toEqual(def.nodes.map(n => n.id).sort()) // one position per node
     fireEvent.click(screen.getByRole('button', { name: 'YAML' }))
     expect((await screen.findByLabelText('issue-to-proposal.yaml')).textContent).toContain('- id: review')
   })
@@ -268,6 +271,7 @@ describe('builder', () => {
       { match: /\/api\/workflows$/, body: [{ id: 'wf2', workspace_id: 'ws', name: 'issue-to-proposal', version: 2, trigger_type: 'manual', created_at: '', description: '' }] },
       { match: /\/api\/workflows\/wf1$/, body: { id: 'wf1', name: 'issue-to-proposal', version: 1, workspace_id: 'ws', created_at: '2026-01-01T00:00:00Z', definition: { ...docsExample(), trigger: { type: 'manual' }, variables: { repo: { required: true } } } } },
       { match: /\/api\/workflows\/wf1\/runs$/, method: 'POST', body: { run_id: 'wr9' } },
+      { match: /\/api\/workflows\/wf1\/versions$/, body: [{ id: 'wf2', version: 2, status: 'active', created_by: 'a', created_at: '' }, { id: 'wf1', version: 1, status: 'active', created_by: 'a', created_at: '' }] },
     ])
     renderApp('#/workflows/wf1')
     await screen.findByText('You are looking at an older version')

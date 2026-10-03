@@ -3,7 +3,7 @@ import { clientCheck, mergeProblems, problemsByNode } from '../../src/lib/workfl
 import { changeKind, addMember, removeMember, describeCondition, emptyComparison, filterToRows, rowsToFilter, setAt, condKind } from '../../src/lib/workflow/condition'
 import { addEdge, addNode, emptyDefinition, setMaxVisits } from '../../src/lib/workflow/model'
 import { parseImport, parseYaml, toJson, toYaml } from '../../src/lib/workflow/serialize'
-import { clearDraft, loadDraft, loadLayout, loadVersions, rememberVersion, saveDraft, saveLayout } from '../../src/lib/workflow/storage'
+import { clearDraft, loadDraft, saveDraft } from '../../src/lib/workflow/storage'
 import { ACTIONS, docsExample } from './wfHelpers'
 
 const codes = (d: Parameters<typeof clientCheck>[0], actions = ACTIONS) => clientCheck(d, actions).map(p => p.code)
@@ -163,23 +163,17 @@ describe('condition builder', () => {
 })
 
 describe('browser storage helpers never throw', () => {
-  it('saves and loads drafts, layout and remembered versions', () => {
+  it('saves, loads and clears drafts', () => {
     saveDraft('k', { def: docsExample(), savedAt: 1, baseId: null })
     expect(loadDraft('k')?.def.name).toBe('issue-to-proposal')
     clearDraft('k')
     expect(loadDraft('k')).toBeNull()
-    saveLayout('k', { a: { x: 1, y: 2 } })
-    expect(loadLayout('k')).toEqual({ a: { x: 1, y: 2 } })
-    rememberVersion('wf', { id: 'a', version: 1, savedAt: 1 })
-    rememberVersion('wf', { id: 'b', version: 2, savedAt: 2 })
-    expect(loadVersions('wf').map(v => v.version)).toEqual([2, 1])
   })
   it('survives unreadable storage', () => {
     const real = globalThis.localStorage
     Object.defineProperty(globalThis, 'localStorage', { value: { getItem() { throw new Error('blocked') }, setItem() { throw new Error('blocked') }, removeItem() { throw new Error('blocked') } }, configurable: true })
     expect(loadDraft('k')).toBeNull()
     expect(saveDraft('k', { def: docsExample(), savedAt: 1, baseId: null })).toBe(false)
-    expect(loadVersions('wf')).toEqual([])
     Object.defineProperty(globalThis, 'localStorage', { value: real, configurable: true })
   })
 })

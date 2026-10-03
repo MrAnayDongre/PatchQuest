@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/errors'
-import { listTemplates, listWorkflowRuns, listWorkflows, type WorkflowRunSummary } from '../../api/workflows'
+import { listTemplates, listVersions, listWorkflowRuns, listWorkflows, type WorkflowRunSummary, type WorkflowVersion } from '../../api/workflows'
 import { Dialog } from '../../design/overlay'
 import { Callout } from '../../design/overlay'
 import { Badge, Button, Card, CardHeader, EmptyState, Skeleton } from '../../design/primitives'
@@ -47,8 +47,33 @@ export default function WorkflowsPage() {
   const flows = useAsync(s => listWorkflows(s), [])
   const runs = useAsync(s => listWorkflowRuns(s), [])
   const [gallery, setGallery] = useState(false)
+  // every version of each workflow, so a run on an older version still shows under its workflow
+  const [versions, setVersions] = useState<Record<string, WorkflowVersion[]>>({})
+  const listed = flows.data
+  useEffect(() => {
+    if (!listed) return
+    let live = true
+    listed.slice(0, 30).forEach(w => {
+      listVersions(w.id)
+        .then(v => live && setVersions(prev => ({ ...prev, [w.id]: v })))
+        .catch(() => {})
+    })
+    return () => {
+      live = false
+    }
+  }, [listed])
+  const versionOf = (workflowId: string): { name: string; version: number } | undefined => {
+    for (const w of listed ?? []) {
+      const v = versions[w.id]?.find(x => x.id === workflowId) ?? (w.id === workflowId ? { version: w.version } : undefined)
+      if (v) return { name: w.name, version: v.version }
+    }
+    return undefined
+  }
   const forbidden = flows.error instanceof ApiError && flows.error.status === 403
-  const lastRun = (id: string): WorkflowRunSummary | undefined => runs.data?.find(r => r.workflow_id === id)
+  const lastRun = (id: string): WorkflowRunSummary | undefined => {
+    const ids = new Set((versions[id] ?? []).map(v => v.id).concat(id))
+    return runs.data?.find(r => ids.has(r.workflow_id)) // the API lists newest first
+  }
   const actions = (
     <>
       <Button icon="plus" onClick={() => setGallery(true)}>From template</Button>
@@ -85,7 +110,7 @@ export default function WorkflowsPage() {
                     <Badge>{triggerLabel(w.trigger_type)}</Badge>
                     <Badge tone="muted">Version {w.version}</Badge>
                     <span className="wf-row__last ui-muted">
-                      {r ? <><StatusDot tone={runStatusTone(r.status)} /> {runStatusLabel(r.status)} {relativeTime(r.created_at)}</> : 'No runs on this version'}
+                      {r ? <><StatusDot tone={runStatusTone(r.status)} /> {runStatusLabel(r.status)} {relativeTime(r.created_at)}{versionOf(r.workflow_id) && versionOf(r.workflow_id)!.version !== w.version ? ` (version ${versionOf(r.workflow_id)!.version})` : ''}</> : 'No runs yet'}
                     </span>
                   </a>
                 </li>
@@ -107,8 +132,8 @@ export default function WorkflowsPage() {
               <li key={r.id}>
                 <a className="wf-row" href={`#/workflows/runs/${encodeURIComponent(r.id)}`}>
                   <span className="wf-row__main">
-                    <strong className="ui-truncate">{flows.data?.find(w => w.id === r.workflow_id)?.name ?? 'Earlier version'}</strong>
-                    <span className="ui-muted ui-truncate">{r.id}</span>
+                    <strong className="ui-truncate">{versionOf(r.workflow_id)?.name ?? 'Workflow'}</strong>
+                    <span className="ui-muted ui-truncate">{versionOf(r.workflow_id) ? `Version ${versionOf(r.workflow_id)!.version}` : r.id}</span>
                   </span>
                   <span className="wf-row__last"><StatusDot tone={runStatusTone(r.status)} /> {runStatusLabel(r.status)}</span>
                   <span className="ui-muted">{relativeTime(r.created_at)}</span>

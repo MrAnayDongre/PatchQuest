@@ -50,6 +50,14 @@ export const saveWorkflow = (definition: WfDef, workspaceId?: string): Promise<{
   request('/workflows', { method: 'POST', body: { definition, workspace_id: workspaceId } })
 export const validateWorkflow = (definition: WfDef, signal?: AbortSignal): Promise<{ ok: boolean; problems: Problem[] }> =>
   request('/workflows/validate', { method: 'POST', body: { definition }, signal })
+export interface WorkflowVersion {
+  id: string
+  version: number
+  status: string
+  created_by: string | null
+  created_at: string
+}
+export const listVersions = (id: string, signal?: AbortSignal): Promise<WorkflowVersion[]> => request(`/workflows/${enc(id)}/versions`, { signal })
 export const listTemplates = (signal?: AbortSignal): Promise<TemplateSummary[]> => request('/workflows/templates', { signal })
 export const getTemplate = (name: string, signal?: AbortSignal): Promise<{ definition: WfDef; requires: string[] }> =>
   request(`/workflows/templates/${enc(name)}`, { signal })

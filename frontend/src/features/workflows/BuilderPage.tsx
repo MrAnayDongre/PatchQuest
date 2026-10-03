@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as RKeyboardEvent } from 'react'
 import { ApiError } from '../../api/errors'
-import { getTemplate, getWorkflow, listActions, listWorkflows, saveWorkflow, startWorkflowRun, problemsFromError } from '../../api/workflows'
+import { getTemplate, getWorkflow, listActions, listVersions, saveWorkflow, startWorkflowRun, problemsFromError } from '../../api/workflows'
 import { useApp } from '../../app/AppContext'
 import { isTypingTarget } from '../../app/shortcuts'
 import { Icon } from '../../design/icons'
@@ -12,9 +12,9 @@ import { friendlyError } from '../../api/errors'
 import { clientCheck, mergeProblems, problemsByNode, type ActionMeta } from '../../lib/workflow/clientCheck'
 import { PERMISSION_COPY } from '../../lib/workflow/copy'
 import { canRedo, canUndo, historyReducer, initHistory } from '../../lib/workflow/history'
-import { autoLayout, ensureLayout, GRID, placeNear, snapPos } from '../../lib/workflow/layout'
+import { autoLayout, ensureLayout, GRID, layoutFrom, placeNear, snapPos, withLayout } from '../../lib/workflow/layout'
 import { addNode, duplicateNodes, emptyDefinition, normalize, removeEdge, removeNodes } from '../../lib/workflow/model'
-import { clearDraft, loadDraft, loadLayout, rememberVersion, saveDraft, saveLayout } from '../../lib/workflow/storage'
+import { clearDraft, loadDraft, saveDraft } from '../../lib/workflow/storage'
 import type { NodeType, Pos, WfDef } from '../../lib/workflow/types'
 import { screenToWorld, type Viewport } from '../../lib/workflow/viewport'
 import { nextLabel, needsLabelChoice, labelOptions } from '../../lib/workflow/edgeRules'
@@ -53,11 +53,12 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
   const [isOld, setIsOld] = useState(false)
   const [requires, setRequires] = useState<string[]>([])
 
-  const start = useCallback((def: WfDef, base: string, positionsKey: string) => {
+  // Positions live in the definition's `layout`; nodes without one get an automatic spot.
+  const start = useCallback((def: WfDef) => {
     const norm = normalize(def)
-    dispatch({ type: 'reset', value: { def: norm, positions: ensureLayout(norm, loadLayout(positionsKey)) } })
-    savedJson.current = stable(norm)
-    void base
+    const positions = ensureLayout(norm, layoutFrom(norm))
+    dispatch({ type: 'reset', value: { def: norm, positions } })
+    savedJson.current = stable(withLayout(norm, positions))
   }, [])
 
   useEffect(() => {
@@ -68,22 +69,21 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
         if (isNew && template) {
           const t = await getTemplate(template)
           if (!live) return
-          start(t.definition, 'template', 'new')
+          start(t.definition)
           setRequires(t.requires)
           savedJson.current = stable(emptyDefinition()) // a template is unsaved by definition
         } else if (!isNew) {
           const rec = await getWorkflow(id as string)
           if (!live) return
           setRecord({ id: rec.id, name: rec.name, version: rec.version, workspace_id: rec.workspace_id })
-          start(rec.definition, rec.id, rec.id)
-          rememberVersion(rec.name, { id: rec.id, version: rec.version, savedAt: Date.parse(rec.created_at ?? '') || Date.now() })
-          listWorkflows().then(all => {
-            const newest = all.find(w => w.name === rec.name && w.workspace_id === rec.workspace_id)
-            if (live && newest && newest.version > rec.version) setIsOld(true)
+          start(rec.definition)
+          listVersions(rec.id).then(all => {
+            if (live && all.some(v => v.version > rec.version)) setIsOld(true)
           }).catch(() => {})
         }
         if (draft && (isNew || draft.baseId === id) && stable(draft.def) !== savedJson.current) {
-          dispatch({ type: 'reset', value: { def: normalize(draft.def), positions: ensureLayout(normalize(draft.def), loadLayout(storageKey)) } })
+          const restored = normalize(draft.def)
+          dispatch({ type: 'reset', value: { def: restored, positions: ensureLayout(restored, layoutFrom(restored)) } })
           setRestoredDraft(true)
         } else if (isNew && !template && draft) {
           // an identical draft: nothing to restore
@@ -100,7 +100,9 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
   }, [id, template])
 
   const def = doc.def
-  const dirty = ready && stable(def) !== savedJson.current
+  // what is saved, validated and exported: the definition plus the positions of its nodes
+  const full = useMemo(() => withLayout(def, doc.positions), [def, doc.positions])
+  const dirty = ready && stable(full) !== savedJson.current
   const readOnly = (isOld && !restoredDraft && !dirty) || narrow
 
   // ---- editing helpers
@@ -130,12 +132,11 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
   useEffect(() => {
     if (!ready) return
     const t = window.setTimeout(() => {
-      saveLayout(storageKey, doc.positions)
-      if (dirty) saveDraft(storageKey, { def, savedAt: Date.now(), baseId: id })
+      if (dirty) saveDraft(storageKey, { def: full, savedAt: Date.now(), baseId: id })
       else clearDraft(storageKey)
     }, 400)
     return () => window.clearTimeout(t)
-  }, [ready, doc.positions, def, dirty, storageKey, id])
+  }, [ready, full, dirty, storageKey, id])
 
   const select = useCallback((ids: string[], additive: boolean) => {
     setSelectedEdge(null)
@@ -254,8 +255,8 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
 
   // ---- validation
   const local = useMemo(() => clientCheck(def, actions.length ? actions : undefined), [def, actions])
-  const { verdict, checking, error: validateError } = useServerValidation(def, ready)
-  const current = verdict?.def === def ? verdict : null
+  const { verdict, checking, error: validateError } = useServerValidation(full, ready)
+  const current = verdict?.def === full ? verdict : null
   const problems = mergeProblems(current ? current.problems : null, local)
   const byNode = useMemo(() => problemsByNode(problems), [problems])
   const canSave = !!current?.ok && !readOnly && dirty !== undefined && !narrow
@@ -268,11 +269,9 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
     setSaving(true)
     setSaveError(null)
     try {
-      const r = await saveWorkflow(def, record?.workspace_id)
-      rememberVersion(r.name, { id: r.id, version: r.version, savedAt: Date.now() })
-      savedJson.current = stable(def)
+      const r = await saveWorkflow(full, record?.workspace_id)
+      savedJson.current = stable(full)
       clearDraft(storageKey)
-      saveLayout(r.id, doc.positions)
       setNavGuard(null)
       void refreshWorkflows()
       toast({ title: `Saved as version ${r.version}`, message: 'Earlier versions and runs are unchanged.', tone: 'success' })
@@ -327,7 +326,7 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
     }
   }
 
-  const importDef = (next: WfDef) => commit({ def: next, positions: autoLayout(next) })
+  const importDef = (next: WfDef) => commit({ def: next, positions: ensureLayout(next, layoutFrom(next)) })
 
   if (loadError) {
     const status = loadError instanceof ApiError ? loadError.status : 0
@@ -458,8 +457,8 @@ export default function BuilderPage({ id, template, runIntent }: { id: string | 
 
       <ConnectDialog def={def} nodeId={only} open={dialog === 'connect'} onClose={() => setDialog(null)} onDef={setDef} />
       <ImportDialog open={dialog === 'import'} onClose={() => setDialog(null)} onImport={importDef} />
-      <ExportDialog def={def} open={dialog === 'export'} onClose={() => setDialog(null)} />
-      <VersionsDialog name={def.name ?? ''} currentId={record?.id ?? null} currentVersion={record?.version ?? null} open={dialog === 'versions'} onClose={() => setDialog(null)} />
+      <ExportDialog def={full} open={dialog === 'export'} onClose={() => setDialog(null)} />
+      <VersionsDialog currentId={record?.id ?? null} currentVersion={record?.version ?? null} open={dialog === 'versions'} onClose={() => setDialog(null)} />
       <TestRunDialog def={def} open={dialog === 'test'} onClose={() => setDialog(null)} onStart={startRun} busy={starting} error={runError} />
       <Dialog
         open={dialog === 'leave'}

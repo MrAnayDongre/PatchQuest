@@ -7,9 +7,8 @@ import { Badge, Button, Card, CardHeader, Skeleton, StatusDot } from '../../desi
 import { usePolling } from '../../hooks/useAsync'
 import { relativeTime } from '../../lib/format'
 import { PERMISSION_COPY } from '../../lib/workflow/copy'
-import { ensureLayout } from '../../lib/workflow/layout'
+import { ensureLayout, layoutFrom } from '../../lib/workflow/layout'
 import { approvalMessage, describeWfEvent, isRunTerminal, nodeVisuals, pendingApprovals, runStatusLabel, runStatusTone, uncertainSteps, VISUAL_COPY, visualOf, waitingExplanation, type WfRun, type WfStep } from '../../lib/workflow/run'
-import { loadLayout } from '../../lib/workflow/storage'
 import type { WfDef } from '../../lib/workflow/types'
 import type { Viewport } from '../../lib/workflow/viewport'
 import { ErrorNotice } from '../common'
@@ -106,7 +105,7 @@ export default function WorkflowRunPage({ id }: { id: string }) {
   }
 
   const visuals = useMemo(() => (def && run ? nodeVisuals(def, run.steps) : undefined), [def, run])
-  const positions = useMemo(() => (def ? ensureLayout(def, loadLayout(run?.workflow_id ?? '')) : {}), [def, run?.workflow_id])
+  const positions = useMemo(() => (def ? ensureLayout(def, layoutFrom(def)) : {}), [def])
   const approvals = run ? pendingApprovals(run.steps) : []
   const uncertain = run ? uncertainSteps(run.steps) : []
   const attention = useMemo(() => new Set([...approvals, ...uncertain].map(s => s.node_id)), [approvals, uncertain])

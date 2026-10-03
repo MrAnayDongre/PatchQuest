@@ -8,7 +8,9 @@ import { NODE_COPY } from '../../lib/workflow/copy'
 import { labelText } from '../../lib/workflow/edgeRules'
 import { outgoingOf } from '../../lib/workflow/model'
 import { parseImport, toJson, toYaml } from '../../lib/workflow/serialize'
-import { loadVersions } from '../../lib/workflow/storage'
+import { listVersions, type WorkflowVersion } from '../../api/workflows'
+import { useAsync } from '../../hooks/useAsync'
+import { ErrorNotice } from '../common'
 import { NODE_TYPES, type NodeType, type Problem, type WfDef } from '../../lib/workflow/types'
 import { nodeSummary } from './summary'
 import { Connections } from './ConfigPanel'
@@ -159,25 +161,33 @@ export function ImportDialog({ open, onClose, onImport }: { open: boolean; onClo
   )
 }
 
-export function VersionsDialog({ name, currentId, currentVersion, open, onClose }: { name: string; currentId: string | null; currentVersion: number | null; open: boolean; onClose: () => void }) {
-  const list = open ? loadVersions(name) : []
+export function VersionsDialog({ currentId, currentVersion, open, onClose }: { currentId: string | null; currentVersion: number | null; open: boolean; onClose: () => void }) {
+  const versions = useAsync(s => listVersions(currentId as string, s), [currentId], open && !!currentId)
+  const list: WorkflowVersion[] = versions.data ?? []
+  const newest = list[0]?.version
   return (
     <Dialog open={open} onClose={onClose} title="Versions" description="Saving never changes an existing version, and a run always stays on the version it started with." footer={<Button onClick={onClose}>Close</Button>}>
-      {currentVersion !== null && <p>You are on <strong>version {currentVersion}</strong>.</p>}
-      {list.length === 0 ? (
-        <p className="ui-muted">No other versions are remembered in this browser yet.</p>
+      {versions.error ? (
+        <ErrorNotice error={versions.error} onRetry={versions.refresh} subject="the versions" />
+      ) : versions.loading && !versions.data ? (
+        <p className="ui-muted">Loading…</p>
       ) : (
         <ul className="wf-versions">
           {list.map(v => (
             <li key={v.id}>
-              <a href={`#/workflows/${encodeURIComponent(v.id)}`} onClick={onClose}>Version {v.version}</a>
-              <span className="ui-muted">saved {relativeTime(new Date(v.savedAt).toISOString())}</span>
+              <strong>Version {v.version}</strong>
+              {v.version === newest && <Badge tone="success">Newest</Badge>}
               {v.id === currentId && <Badge tone="info">Open now</Badge>}
+              {v.status !== 'active' && <Badge tone="muted">{v.status}</Badge>}
+              <span className="ui-muted">{v.created_by ? `${v.created_by}, ` : ''}{relativeTime(v.created_at)}</span>
+              {v.id !== currentId && (
+                <a href={`#/workflows/${encodeURIComponent(v.id)}`} onClick={onClose}>{v.version === newest ? 'Open' : 'Open (read-only)'}</a>
+              )}
             </li>
           ))}
         </ul>
       )}
-      <Callout tone="muted" title="Why only some versions?">The server lists only the newest version of each workflow, so this list shows versions saved from this browser. Open one to read it; “Restore” makes it the base of a new version.</Callout>
+      {currentVersion !== null && newest !== undefined && currentVersion < newest && <Callout tone="warning" title={`This is version ${currentVersion}, not the newest`}>Use “Restore this version” on the page to base a new version on it.</Callout>}
     </Dialog>
   )
 }
