@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from patchquest.connectors.migration import MIGRATION as CONNECTOR_MIGRATION
 from patchquest.persistence.migrations import Migration, add_columns, run_script
 
 _LEDGER_COLUMNS = {
@@ -176,5 +177,6 @@ MIGRATIONS = [
     Migration(5, "run lineage and per-run overrides", _lineage),
     Migration(6, "approval decisions, expiry and grants", _approvals),
     Migration(7, "organisations, workspaces, principals, tokens and audit log", _identity),
-    Migration(9, "workflows, runs, steps and events", _workflows),  # 8 is reserved for connector tables
+    CONNECTOR_MIGRATION,
+    Migration(9, "workflows, runs, steps and events", _workflows),
 ]

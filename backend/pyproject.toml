@@ -60,6 +60,7 @@ addopts = "--strict-markers"
 markers = [
     "docker: needs a reachable Docker daemon and the patchquest-sandbox image (skipped otherwise)",
     "live: talks to a real model endpoint; never run by default",
+    "mocked_protocol: exercises an integration against a simulated server (MOCKED_PROTOCOL_TEST); not live-verified",
 ]
 
 [tool.ruff]
