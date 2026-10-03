@@ -215,6 +215,107 @@ def bench_ledger(writers: int, per_writer: int) -> dict[str, Any]:
             "append_latency": summarize(latencies)}
 
 
+def bench_workload(total: int, workers: int) -> dict[str, Any]:
+    """Real runs (mock provider, read-only task, tiny repository) through the whole stack: create, queue, claim, execute, complete.
+
+    ``workers`` worker loops share one event loop, so up to that many runs are active at once. Measures what the control plane
+    does per run; model latency and test execution time are excluded by construction (the mock model is instant).
+    """
+    from patchquest.application import TaskService
+    from patchquest.database import get_db
+    from patchquest.runtime.worker import Worker
+
+    repo = Path(tempfile.mkdtemp(prefix="pq-bench-repo-"))
+    (repo / "a.py").write_text("def a():\n    return 1\n")
+    svc = TaskService()
+    create_ms: list[float] = []
+    ids_: list[str] = []
+    t0 = time.perf_counter()
+    for _ in range(total):
+        t = time.perf_counter()
+        run = svc.create_run(repo_path=str(repo), task="read only: explain the repo", provider="mock")
+        svc.enqueue(run["id"])
+        create_ms.append((time.perf_counter() - t) * 1000)
+        ids_.append(run["id"])
+    enqueue_wall = time.perf_counter() - t0
+
+    async def drive() -> dict[str, Any]:
+        stop = asyncio.Event()
+        pool = [Worker(TaskService(), worker_id=f"bench-w{i}", lease_s=60, poll_s=0.05) for i in range(workers)]
+        tasks = [asyncio.create_task(w.run_forever(stop)) for w in pool]
+        peak = 0
+        started = time.perf_counter()
+        while True:
+            with get_db() as conn:
+                counts = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM runs WHERE repo_path = ? GROUP BY status", (str(repo),))}
+                running = counts.get("running", 0)
+                done = sum(counts.get(s, 0) for s in ("completed", "failed", "cancelled"))
+            peak = max(peak, running)
+            if done >= total or time.perf_counter() - started > 900:
+                break
+            await asyncio.sleep(0.1)
+        wall = time.perf_counter() - started
+        stop.set()
+        await asyncio.gather(*tasks)
+        return {"wall": wall, "peak_running": peak}
+
+    drained = asyncio.run(drive())
+    with get_db() as conn:
+        rows = conn.execute("SELECT status, created_at, completed_at FROM runs WHERE repo_path = ?", (str(repo),)).fetchall()
+    from datetime import datetime as dt
+
+    lat = [(dt.fromisoformat(r["completed_at"]) - dt.fromisoformat(r["created_at"])).total_seconds() * 1000 for r in rows if r["completed_at"]]
+    failed = sum(1 for r in rows if r["status"] != "completed")
+    return {"runs": total, "workers": workers, "peak_concurrently_running": drained["peak_running"], "errors": failed,
+            "error_rate": round(failed / total, 4), "create_and_enqueue": summarize(create_ms), "enqueue_wall_s": round(enqueue_wall, 2),
+            "drain_wall_s": round(drained["wall"], 2), "runs_per_s": round(total / drained["wall"], 1),
+            "queued_to_completed": summarize(lat) if lat else None}
+
+
+def bench_recovery(trials: int, lease_s: float = 0.4) -> dict[str, Any]:
+    """A worker claims a run and dies (never heartbeats). How long after its lease expires does another worker recover and finish it?"""
+    import datetime as _dt
+
+    from patchquest.application import TaskService
+    from patchquest.database import get_db
+    from patchquest.runtime import queue
+    from patchquest.runtime.worker import Worker
+
+    repo = Path(tempfile.mkdtemp(prefix="pq-bench-rec-"))
+    (repo / "a.py").write_text("def a():\n    return 1\n")
+    svc = TaskService()
+    to_recovered: list[float] = []
+    to_completed: list[float] = []
+
+    async def trial() -> None:
+        run = svc.create_run(repo_path=str(repo), task="read only: explain the repo", provider="mock")
+        svc.enqueue(run["id"])
+        claim = queue.claim("dead-worker", lease_s)
+        if claim is None or claim.run_id != run["id"]:
+            raise RuntimeError("the recovery trial needs an otherwise idle queue")
+        with get_db() as conn:
+            expires = _dt.datetime.fromisoformat(conn.execute("SELECT lease_expires_at FROM runs WHERE id = ?", (run["id"],)).fetchone()[0])
+        rescuer = Worker(svc, worker_id="rescuer", lease_s=30, poll_s=0.05)
+        recovered_at = None
+        while True:
+            now = _dt.datetime.now(_dt.UTC)
+            if now > expires:
+                await rescuer.run_once()
+                with get_db() as conn:
+                    status = conn.execute("SELECT status FROM runs WHERE id = ?", (run["id"],)).fetchone()[0]
+                if recovered_at is None and status != "running":
+                    recovered_at = (_dt.datetime.now(_dt.UTC) - expires).total_seconds() * 1000
+                if status == "completed":
+                    to_recovered.append(recovered_at or 0.0)
+                    to_completed.append((_dt.datetime.now(_dt.UTC) - expires).total_seconds() * 1000)
+                    return
+            await asyncio.sleep(0.02)
+
+    for _ in range(trials):
+        asyncio.run(trial())
+    return {"trials": trials, "lease_s": lease_s, "lease_expiry_to_recovered": summarize(to_recovered), "lease_expiry_to_completed": summarize(to_completed)}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--orgs", type=int, default=1000)
@@ -224,15 +325,28 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--api-samples", type=int, default=300)
     ap.add_argument("--queue-runs", type=int, default=1000)
     ap.add_argument("--hot-fraction", type=float, default=0.3, help="share of all runs owned by one 'hot' tenant")
+    ap.add_argument("--workload-runs", type=int, default=0, help="also drain this many real mock runs (create, queue, claim, execute)")
+    ap.add_argument("--workers", type=int, default=100, help="worker loops for the workload (= peak concurrent runs)")
+    ap.add_argument("--recovery-trials", type=int, default=0, help="also time worker-death recovery this many times")
+    ap.add_argument("--postgres", help="run against this PostgreSQL DSN (a fresh schema is created and dropped) instead of SQLite")
     ap.add_argument("--out", help="directory for the JSON result (e.g. benchmarks/history/)")
     args = ap.parse_args(argv)
 
     tmp = tempfile.mkdtemp(prefix="pq-bench-")
     os.environ["PATCHQUEST_DB"] = str(Path(tmp) / "bench.db")
+    from patchquest import database
     from patchquest.config import AppConfig, set_config
     from patchquest.database import init_db
 
     set_config(AppConfig(queue_mode=True))
+    schema = None
+    if args.postgres:
+        import psycopg
+
+        schema = "bench_" + uuid.uuid4().hex[:8]
+        with psycopg.connect(args.postgres, autocommit=True) as admin:
+            admin.execute(f"CREATE SCHEMA {schema}")
+        database.use_postgres(args.postgres, schema)
     init_db()
     rss0, cpu0 = rss_mb(), time.process_time()
     loaded = seed(args.orgs, args.users_per_org, args.runs, args.events_per_run, args.hot_fraction)
@@ -241,14 +355,29 @@ def main(argv: list[str] | None = None) -> int:
         "config": {k: v for k, v in vars(args).items() if k != "out"}, "seed": loaded["seed"]}
     result["api"] = asyncio.run(bench_api(loaded["workspaces"], loaded["tokens"], loaded["runs"], args.api_samples))
     result["api_hot_tenant"] = asyncio.run(bench_api(loaded["workspaces"], loaded["tokens"], loaded["runs"], args.api_samples, hot=True))
+    if args.recovery_trials:
+        result["recovery"] = bench_recovery(args.recovery_trials)
+    if args.workload_runs:
+        result["workload"] = bench_workload(args.workload_runs, args.workers)
     result["queue"] = {"single_claimer": bench_queue(args.queue_runs // 2, 1, "qa"), "concurrent_claimers": bench_queue(args.queue_runs // 2, 8, "qb")}
     result["ledger"] = {"single_writer": bench_ledger(1, 500), "concurrent_writers": bench_ledger(8, 200)}
-    db = Path(tmp) / "bench.db"
-    result["resources"] = {"db_mb": round(db.stat().st_size / 1048576, 1), "wal_mb": round(Path(str(db) + "-wal").stat().st_size / 1048576, 1)
-                           if Path(str(db) + "-wal").exists() else 0.0, "rss_growth_mb": round(rss_mb() - rss0, 1),
-                           "cpu_s": round(time.process_time() - cpu0, 1)}
+    result["backend"] = "postgresql" if args.postgres else "sqlite"
+    if args.postgres:
+        with database.get_db() as conn:
+            db_mb = conn.execute("SELECT SUM(pg_total_relation_size(c.oid)) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                                 "WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'i')").fetchone()[0] / 1048576
+        result["resources"] = {"db_mb": round(float(db_mb), 1), "rss_growth_mb": round(rss_mb() - rss0, 1), "cpu_s": round(time.process_time() - cpu0, 1)}
+    else:
+        db = Path(tmp) / "bench.db"
+        result["resources"] = {"db_mb": round(db.stat().st_size / 1048576, 1), "wal_mb": round(Path(str(db) + "-wal").stat().st_size / 1048576, 1)
+                               if Path(str(db) + "-wal").exists() else 0.0, "rss_growth_mb": round(rss_mb() - rss0, 1),
+                               "cpu_s": round(time.process_time() - cpu0, 1)}
     text = json.dumps(result, indent=2)
     print(text)
+    if schema:
+        database.use_sqlite()
+        with psycopg.connect(args.postgres, autocommit=True) as admin:
+            admin.execute(f"DROP SCHEMA {schema} CASCADE")
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)

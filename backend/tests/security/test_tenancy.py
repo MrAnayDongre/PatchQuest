@@ -237,3 +237,23 @@ async def test_me_lists_only_the_callers_workspaces_and_their_permissions(world)
     assert "run.create" in body["workspaces"][0]["permissions"] and "connector.manage" not in body["workspaces"][0]["permissions"]
     async with world.client() as c:
         assert (await c.get("/api/me")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_a_directory_that_holds_other_repositories_cannot_be_claimed(world, tmp_path):
+    """Claiming /srv/repos would hand a tenant every checkout beneath it and lock the others out of registering theirs."""
+    import subprocess
+
+    parent = tmp_path / "all-repos"
+    other = parent / "someone-elses"
+    other.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    refused = await register(world, "admin_a", str(parent))
+    assert refused.status_code == 422 and "contains other repositories" in refused.json()["detail"]["message"]
+    ok = await register(world, "admin_a", str(other))  # the repository itself is fine
+    assert ok.status_code == 201
+    deep = parent / "a" / "b" / "c" / "d"
+    (deep / ".git").mkdir(parents=True)
+    assert tenancy.check_registrable(str(deep)) is None  # its own root, however deep
+    with get_db() as conn:
+        assert [r["path"] for r in tenancy.list_repositories(conn, world.ws["a"]) if "all-repos" in r["path"]] == [str(other.resolve())]

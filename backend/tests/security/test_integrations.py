@@ -317,3 +317,17 @@ def test_deleting_an_integration_deletes_its_secrets(world, ws, net):
         service.delete(conn, ws, integration, "user:admin")
         assert conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM integrations").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_deliveries_are_audited_only_up_to_a_cap_per_minute(world, ws, net, monkeypatch):
+    from patchquest.api import routes_hooks
+    monkeypatch.setattr(routes_hooks, "_LIMIT", 10_000)
+    routes_hooks._hits.clear()
+    routes_hooks._rejected.clear()
+    integration = connect_github(ws)
+    async with world.client() as c:
+        for i in range(routes_hooks._AUDIT_PER_WINDOW + 30):
+            assert (await post_hook(c, integration, github_delivery(b"wrong", "issues", {"action": "labeled"}, f"d{i}"))).status_code == 401
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'webhook.rejected'").fetchone()[0] == routes_hooks._AUDIT_PER_WINDOW

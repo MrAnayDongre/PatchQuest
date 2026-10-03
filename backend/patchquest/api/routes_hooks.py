@@ -26,9 +26,25 @@ from patchquest.workflows.runtime import get_engine
 router = APIRouter(tags=["hooks"])
 
 _WINDOW_S, _LIMIT = 60.0, 300
+_AUDIT_PER_WINDOW = 20  # rejected deliveries recorded per integration per window; the rest are only counted
 _hits: dict[str, list[float]] = {}
 _lock = threading.Lock()
 _STATUS = {"body_too_large": 413, "unverified_signature": 401, "invalid_signature": 401, "malformed": 400}
+
+
+_rejected: dict[str, list[float]] = {}
+
+
+def _should_audit_rejection(integration_id: str) -> bool:
+    """An attacker with a valid integration id could otherwise grow the audit log by ~300 rows/minute for as long as they like."""
+    now = time.monotonic()
+    with _lock:
+        recent = [t for t in _rejected.get(integration_id, []) if now - t < _WINDOW_S]
+        recent.append(now)
+        _rejected[integration_id] = recent
+        if len(_rejected) > 10_000:
+            _rejected.clear()
+        return len(recent) <= _AUDIT_PER_WINDOW
 
 
 def _limited(integration_id: str) -> bool:
@@ -85,7 +101,7 @@ async def receive(integration_id: str, request: Request) -> JSONResponse:
         return JSONResponse({"status": "error"}, status_code=503)
 
     if isinstance(result, Rejected):
-        if result.reason in ("invalid_signature", "unverified_signature"):
+        if result.reason in ("invalid_signature", "unverified_signature") and _should_audit_rejection(integration_id):
             with get_db() as conn:
                 identity.audit(conn, "webhook.rejected", actor=f"integration:{integration_id}", outcome="denied", workspace_id=row["workspace_id"],
                                target=integration_id, detail={"reason": result.reason}, remote=request.client.host if request.client else None)

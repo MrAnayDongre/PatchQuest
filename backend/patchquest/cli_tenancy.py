@@ -72,7 +72,9 @@ def run(args: argparse.Namespace) -> int:
             org = str(row["org_id"])
             if args.cmd == "repos":
                 if args.repos_cmd == "add":
-                    repo = tenancy.register_repository(conn, args.workspace, validate_repo_path(args.path), args.name, args.project, "cli")
+                    safe = validate_repo_path(args.path)
+                    tenancy.check_registrable(safe)
+                    repo = tenancy.register_repository(conn, args.workspace, safe, args.name, args.project, "cli")
                     return _out(args, repo, f"registered {repo['path']} as {repo['id']}")
                 if args.repos_cmd == "list":
                     found = tenancy.list_repositories(conn, args.workspace)

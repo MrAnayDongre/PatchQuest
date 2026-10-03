@@ -129,6 +129,31 @@ def _overlaps(a: str, b: str) -> bool:
     return pa == pb or pa.is_relative_to(pb) or pb.is_relative_to(pa)
 
 
+MAX_SCAN_ENTRIES = 3000
+
+
+def check_registrable(path: str) -> None:
+    """A registered path must be one repository, not a directory that holds others: claiming ``/srv/repos`` would give a
+    workspace every checkout beneath it (including other tenants') and lock them all out of registering.
+
+    A directory with a ``.git`` is a repository root. Otherwise it is refused if a ``.git`` exists within three levels
+    (the scan is bounded)."""
+    import os
+
+    root = Path(path)
+    if (root / ".git").exists():
+        return
+    seen = 0
+    for dirpath, dirnames, _files in os.walk(root):
+        depth = len(Path(dirpath).relative_to(root).parts)
+        if ".git" in dirnames:
+            raise TenancyError("that directory contains other repositories; register each repository on its own")
+        dirnames[:] = [d for d in dirnames if d not in ("node_modules", ".venv", "venv", "__pycache__")] if depth < 3 else []
+        seen += len(dirnames)
+        if seen > MAX_SCAN_ENTRIES:
+            raise TenancyError("that directory is too large to register as one repository; register the repository's own folder")
+
+
 def register_repository(conn: sqlite3.Connection, workspace_id: str, path: str, name: str | None, project_id: str | None,
                         created_by: str) -> dict[str, Any]:
     """Claim a canonical path for a workspace. Idempotent for the owner; refused if any other workspace has a path

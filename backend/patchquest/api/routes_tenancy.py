@@ -92,6 +92,7 @@ async def register_repository(request: Request, principal: CurrentPrincipal, bod
     _check(request, principal, body.workspace_id, Permission.REPOSITORY_MANAGE)
     try:
         path = validate_repo_path(body.path)
+        tenancy.check_registrable(path)
         with get_db() as conn:
             repo = tenancy.register_repository(conn, body.workspace_id, path, body.name, body.project_id, principal.actor)
     except RepoPathError as exc:

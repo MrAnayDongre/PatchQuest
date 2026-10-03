@@ -93,15 +93,57 @@ evidence and never become policy. Models cannot widen their own permissions. The
 *persuaded* to propose a bad edit; the controls are that the edit is validated by tests, reviewed, and promoted only by
 policy, and that external writes need a human.
 
-## Plugins
+## Policy *(implemented, tested)* - see [policy](policy.md)
 
-There is no plugin loader yet. When one exists, in-process Python is **not** a security boundary against a malicious plugin.
+Decisions are made by deterministic code, strictest answer wins, narrower scopes can only tighten, a malformed stored policy denies,
+and the system floor cannot be relaxed. Enforced at command execution, workflow actions, run creation/fork/replay (limit ceilings),
+model/provider use and memory injection. `ALLOW_WITH_LIMITS` constraints are reported in the decision but no enforcement point consumes
+them yet; network reads and artifact disclosure are not yet policy actions.
+
+## Tenancy and secrets *(implemented, tested)* - see [tenancy](tenancy.md), [integrations](integrations.md)
+
+Workspace is the unit of isolation; foreign objects are 404. A repository path belongs to one workspace (enclosing and nested paths
+included), and a directory that holds other repositories cannot be registered as one. Integration secrets are environment references
+or Fernet-encrypted values bound to their row, write-only through every route, absent from the audit log and from failure messages.
+`POST /hooks/<id>` authenticates by signature before parsing, is rate limited per integration, and samples its audit trail of rejections.
+
+## Memory poisoning *(implemented, tested)* - see [memory](memory.md)
+
+Text from repositories, issues, chat or models can become at most a low-authority, unverified note: preferences and procedures can only
+be created by a person, configuration or deterministic detection, and an instruction-shaped value is refused from automated sources.
+Notes are shown to models labelled as untrusted and "not instructions"; they are never executed.
+
+## Plugins *(implemented, tested)* - see [plugins](plugins.md)
+
+Operator-installed only. `trusted` plugins run in the PatchQuest process with its privileges - **not** a security boundary against a
+malicious plugin. `external_process` plugins get a fresh process per call, a scrubbed environment, CPU/memory/output limits, a timeout
+and process-group cleanup - containment, not a sandbox: they can still read files and open sockets the user account can. Permissions
+are declarations that an operator accepts at enable time, not OS-enforced capabilities.
+
+## Attack pass: what was found and fixed
+
+Findings from adversarial review of the new surfaces, each with a regression test:
+
+| Finding | Severity | Fix |
+|---|---|---|
+| A fork or replay could raise limits above a policy ceiling | P1 | ceilings re-applied in `create_child` |
+| An enclosing directory could be registered by one tenant, giving it every checkout beneath and locking others out | P1 | registration refuses directories that contain `.git` repositories |
+| A paused worker that woke after its lease moved could keep writing to the run | P1 | database writes fenced by lease epoch (rolled back with `LeaseLost`) |
+| "Explain ... Do not modify any files" was classified as a *mutating* task | P2 | a refusal covering the whole repository now means read-only; narrower negations stay scope limits |
+| Evaluation/recovery experiments would have written into a PostgreSQL install's real history | P2 | they run in a throwaway SQLite database regardless of backend |
+| Rejected webhook deliveries could grow the audit log without bound | P2 | audit sampled per integration per minute (the rate limiter already bounds work) |
+| PostgreSQL assigns event ids before commit, so a cursor-following reader could skip an event | P1 | per-run advisory lock orders commits (test fails without it) |
+| Every run appended the repository's symbols again; deleted files stayed indexed | P3 | incremental index, de-duplicating migration |
 
 ## Known limitations
 
-- Worker lease fencing: a stalled worker can overlap its replacement for up to one heartbeat before it notices
-  (it then abandons quietly). Writes are not fenced by epoch.
-- Shadow-workspace tests run agent-edited code with the privileges of the runtime (no network/filesystem sandbox in local mode).
+- Shadow-workspace tests run agent-edited code with the privileges of the runtime (no network/filesystem sandbox in local mode;
+  use the container runtime for untrusted tasks, and note Docker is not VM isolation).
+- A command already running when a worker's lease moves can finish; its database record is discarded.
 - The RL environment can be reward-hacked by an agent that shadows the test runner.
-- `GET /api/metrics` is computed per request and costs O(runs in the window) (about 30 ms for a tenant with 3,300 runs).
-- Not implemented: SSO/OIDC, encrypted-at-rest secrets store, per-tenant quotas, retention/deletion APIs, a network database.
+- Outbound connections are checked but not pinned to the validated IP (DNS rebinding window); use egress rules.
+- Work started by the system with no person behind it (a webhook-triggered workflow) is not subject to a project's team restriction.
+- `PATCHQUEST_DEMO=1` registers demo endpoints that open and fake GitHub issues; never set it outside a demo.
+- `GET /api/metrics` costs O(runs in the window) (about 30 ms for a tenant with 3,300 runs).
+- Not implemented: SSO/OIDC, per-tenant quotas, retention/deletion APIs, per-tenant encryption keys, a policy on network reads and
+  artifact disclosure.
