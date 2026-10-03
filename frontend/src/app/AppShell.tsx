@@ -18,11 +18,15 @@ import { AppProvider, useApp } from './AppContext'
 import { SHORTCUT_HELP, useGlobalShortcuts, type ShortcutAction } from './shortcuts'
 
 const ExtrasPage = lazy(() => import('../features/ExtrasPage'))
+const WorkflowsPage = lazy(() => import('../features/workflows/WorkflowsPage'))
+const BuilderPage = lazy(() => import('../features/workflows/BuilderPage'))
+const WorkflowRunPage = lazy(() => import('../features/workflows/WorkflowRunPage'))
 
 const NAV: { name: RouteName; label: string; icon: IconName; hash: string }[] = [
   { name: 'home', label: 'Home', icon: 'home', hash: buildHash('home') },
   { name: 'runs', label: 'Runs', icon: 'runs', hash: buildHash('runs') },
   { name: 'engines', label: 'Engines', icon: 'engine', hash: buildHash('engines') },
+  { name: 'workflows', label: 'Workflows', icon: 'link', hash: buildHash('workflows') },
   { name: 'metrics', label: 'Metrics', icon: 'clock', hash: buildHash('metrics') },
   { name: 'settings', label: 'Settings', icon: 'settings', hash: buildHash('settings') },
   { name: 'extras', label: 'Extras', icon: 'extras', hash: buildHash('extras') },
@@ -41,7 +45,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const route = useRoute()
   const { runs } = useApp()
   const attention = runs.filter(r => r.status === 'waiting_approval').length
-  const active = route.name === 'run' ? 'runs' : route.name
+  const active = route.name === 'run' ? 'runs' : route.name === 'workflow' || route.name === 'workflow-run' ? 'workflows' : route.name
   return (
     <nav aria-label="Main" className="nav">
       {NAV.map(n => (
@@ -119,9 +123,9 @@ function Shell() {
 
   const toggleTheme = () => setMode(resolved === 'dark' ? 'light' : 'dark')
   const commands = useMemo(
-    () => buildCommands({ runs: app.runs, openNewRun: app.openNewRun, toggleTheme, openHelp: () => app.setHelpOpen(true), currentRunCommands: app.runCommands }),
+    () => buildCommands({ runs: app.runs, openNewRun: app.openNewRun, toggleTheme, openHelp: () => app.setHelpOpen(true), currentRunCommands: app.runCommands, workflows: app.workflows }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [app.runs, app.runCommands, resolved, app.openNewRun],
+    [app.runs, app.runCommands, app.workflows, resolved, app.openNewRun],
   )
 
   const anyDialog = app.newRunOpen || app.helpOpen
@@ -133,6 +137,7 @@ function Shell() {
     else if (a === 'go-home') navigate(buildHash('home'))
     else if (a === 'go-runs') navigate(buildHash('runs'))
     else if (a === 'go-engines') navigate(buildHash('engines'))
+    else if (a === 'go-workflows') navigate(buildHash('workflows'))
     else if (a === 'go-metrics') navigate(buildHash('metrics'))
     else if (a === 'go-settings') navigate(buildHash('settings'))
     else if (a === 'go-extras') navigate(buildHash('extras'))
@@ -150,6 +155,9 @@ function Shell() {
     case 'runs': page = <RunsPage />; break
     case 'run': page = <RunPage key={route.params.id} runId={route.params.id} tab={route.query.tab} />; break
     case 'engines': page = <EnginesPage />; break
+    case 'workflows': page = <Page><WorkflowsPage /></Page>; break
+    case 'workflow': page = <Page><BuilderPage key={route.params.id} id={route.params.id === 'new' ? null : route.params.id} template={route.query.template} runIntent={route.query.run === '1'} /></Page>; break
+    case 'workflow-run': page = <Page><WorkflowRunPage key={route.params.id} id={route.params.id} /></Page>; break
     case 'metrics': page = <MetricsPage />; break
     case 'settings': page = <SettingsPage />; break
     case 'extras': page = <Page><ExtrasPage section={route.params.section} /></Page>; break

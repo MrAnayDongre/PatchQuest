@@ -1,4 +1,5 @@
 import type { Run } from '../api/types'
+import type { WorkflowSummary } from '../api/workflows'
 import { friendlyStatusLine } from '../lib/eventCopy'
 import { baseName, relativeTime, truncate } from '../lib/format'
 import type { PaletteCommand } from '../lib/palette'
@@ -11,6 +12,7 @@ export interface CommandDeps {
   openHelp: () => void
   /** Commands that act on the run currently on screen (cancel, resume, approve...). */
   currentRunCommands: PaletteCommand[]
+  workflows?: WorkflowSummary[]
   now?: number
   maxRuns?: number
 }
@@ -33,6 +35,8 @@ export function buildCommands(d: CommandDeps): PaletteCommand[] {
     go('Go to Home', buildHash('home'), ['dashboard', 'mission control'], ['g', 'h']),
     go('Go to Runs', buildHash('runs'), ['list', 'history'], ['g', 'r']),
     go('Go to Engines', buildHash('engines'), ['providers', 'models', 'local'], ['g', 'e']),
+    { id: 'new-workflow', title: 'New workflow', group: 'Actions', keywords: ['build', 'automation', 'create'], run: () => navigate(buildHash('workflow', { id: 'new' })) },
+    go('Go to Workflows', buildHash('workflows'), ['automation', 'builder', 'approvals'], ['g', 'w']),
     go('Go to Metrics', buildHash('metrics'), ['success rate', 'latency', 'tokens', 'cost'], ['g', 'm']),
     go('Go to Settings', buildHash('settings'), ['token', 'preferences'], ['g', 's']),
     go('Go to Extras', buildHash('extras'), ['games', 'calendar', 'search', 'memory', 'scheduler'], ['g', 'x']),
@@ -48,6 +52,10 @@ export function buildCommands(d: CommandDeps): PaletteCommand[] {
       keywords: [r.id, r.repo_path, r.status, r.model ?? ''],
       run: () => navigate(runHash(r.id)),
     })
+  }
+  for (const w of d.workflows ?? []) {
+    list.push({ id: `wf:${w.id}`, title: w.name, group: 'Open workflow', hint: `Version ${w.version}`, keywords: [w.id, 'workflow', w.description], run: () => navigate(buildHash('workflow', { id: w.id })) })
+    list.push({ id: `wfrun:${w.id}`, title: `Start a run of ${w.name}`, group: 'Start run', hint: `Version ${w.version}`, keywords: [w.id, 'workflow', 'test run'], run: () => navigate(buildHash('workflow', { id: w.id }, { run: '1' })) })
   }
   return list
 }

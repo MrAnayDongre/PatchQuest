@@ -3,7 +3,7 @@ import type { SVGProps } from 'react'
 export type IconName =
   | 'home' | 'runs' | 'engine' | 'settings' | 'extras' | 'plus' | 'search' | 'check' | 'x' | 'chevron-right' | 'chevron-down'
   | 'play' | 'stop' | 'fork' | 'replay' | 'sun' | 'moon' | 'menu' | 'warning' | 'shield' | 'clock' | 'copy' | 'command'
-  | 'arrow-right' | 'refresh' | 'file' | 'pause' | 'edit' | 'external' | 'dot'
+  | 'arrow-right' | 'refresh' | 'file' | 'pause' | 'edit' | 'external' | 'dot' | 'minus' | 'trash' | 'copy2' | 'link' | 'undo' | 'redo' | 'upload' | 'download' | 'list'
 
 const PATHS: Record<IconName, string> = {
   home: 'M3 10.5 12 3l9 7.5M5 9.5V20h5v-6h4v6h5V9.5',
@@ -36,6 +36,15 @@ const PATHS: Record<IconName, string> = {
   edit: 'M4 20h4L19 9l-4-4L4 16v4ZM13 7l4 4',
   external: 'M14 4h6v6M20 4l-9 9M18 14v5H5V6h5',
   dot: 'M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0',
+  minus: 'M5 12h14',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
+  copy2: 'M8 8h12v12H8zM4 16V4h12',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  undo: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+  redo: 'm15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h3',
+  upload: 'M12 16V4M7 9l5-5 5 5M4 20h16',
+  download: 'M12 4v12M7 11l5 5 5-5M4 20h16',
+  list: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01',
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

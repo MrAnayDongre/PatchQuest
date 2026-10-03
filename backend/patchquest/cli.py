@@ -762,12 +762,27 @@ def _probe_providers(args: argparse.Namespace) -> int:
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from patchquest.doctor import FAIL, run_checks
 
+    if args.bundle:
+        from pathlib import Path
+
+        from patchquest import support_bundle
+
+        try:
+            names = support_bundle.build(Path(args.bundle), run_id=args.run)
+        except (FileExistsError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_FAILED
+        print(f"wrote {args.bundle} ({', '.join(names)}). It holds no source, prompts, diffs, task text or keys; read it before sharing.",
+              file=sys.stderr)
+        return EXIT_OK
     checks = run_checks()
     if args.json:
         _emit_json([c.to_dict() for c in checks])
     else:
         for c in checks:
             print(f"{ICON[c.status]} {c.name:<16} {c.detail}")
+            if c.impact and c.status in ("warn", "fail"):
+                print(f"    impact: {c.impact}")
             if c.fix and c.status != "ok":
                 print(f"    fix: {c.fix}")
     return EXIT_FAILED if any(c.status == FAIL for c in checks) else EXIT_OK
@@ -1069,6 +1084,8 @@ def build_parser() -> argparse.ArgumentParser:
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
     d.add_argument("--json", action="store_true")
+    d.add_argument("--bundle", metavar="ZIP", help="write a sanitized diagnostics bundle (no source, prompts or keys) instead")
+    d.add_argument("--run", help="with --bundle: include this run's event history")
     ev = sub.add_parser("eval", help="measure PatchQuest against the evaluation corpus")
     esub = ev.add_subparsers(dest="eval_cmd", required=True)
     el = esub.add_parser("list", help="list corpus tasks")
@@ -1127,7 +1144,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    _bootstrap(args.config)
+    from patchquest.persistence.migrations import SchemaTooNew
+
+    try:
+        _bootstrap(args.config)
+    except SchemaTooNew as exc:
+        if args.cmd != "doctor":  # doctor exists to diagnose exactly this
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_FAILED
     if args.cmd == "run":
         return asyncio.run(_run(args))
     if args.cmd == "resume":

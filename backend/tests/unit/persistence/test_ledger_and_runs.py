@@ -260,3 +260,18 @@ def test_default_state_directory_is_private_and_a_custom_one_is_left_alone(tmp_p
     custom.chmod(0o755)
     database._make_private(custom / "x.db")
     assert stat.S_IMODE(custom.stat().st_mode) == 0o755  # not ours to change
+
+
+def test_the_state_directory_is_always_created_owner_only(tmp_path, monkeypatch):
+    import stat
+
+    from patchquest import database
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("pathlib.Path.home", lambda: home)
+    created = database.ensure_state_dir()
+    assert stat.S_IMODE(created.stat().st_mode) == 0o700
+    created.chmod(0o775)  # something else loosened it
+    database.ensure_state_dir()
+    assert stat.S_IMODE(created.stat().st_mode) == 0o700

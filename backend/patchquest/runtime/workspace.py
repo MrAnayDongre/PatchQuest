@@ -65,6 +65,10 @@ class ShadowWorkspace:
         self.base: dict[str, bytes | None] = {}
 
     def create(self) -> Path:
+        if self.root.is_relative_to(Path.home() / ".patchquest"):
+            from patchquest.database import ensure_state_dir
+
+            ensure_state_dir()
         if self.root.exists():
             shutil.rmtree(self.root)
         copy_repo(Path(self.repo_path), self.path)

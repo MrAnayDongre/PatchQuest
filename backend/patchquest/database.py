@@ -71,12 +71,21 @@ def init_db() -> None:
     init_code_graph()
 
 
-def _make_private(db_path: Path) -> None:
-    """Run history holds task text, command output and file contents: keep PatchQuest's own state
-    directory owner-only. A directory the user chose elsewhere is theirs to manage and is left alone."""
+def ensure_state_dir() -> Path:
+    """``~/.patchquest``, created owner-only. Run history, checkpoints and shadow workspaces hold task text, command
+    output and file contents, so the directory PatchQuest owns is never group- or world-readable."""
     state_dir = Path.home() / ".patchquest"
-    if db_path.parent.resolve() == state_dir.resolve():
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if state_dir.stat().st_mode & 0o077:
         os.chmod(state_dir, 0o700)
+    return state_dir
+
+
+def _make_private(db_path: Path) -> None:
+    """Keep PatchQuest's own state directory and database owner-only. A directory the user chose elsewhere is theirs to
+    manage and is left alone."""
+    if db_path.parent.resolve() == (Path.home() / ".patchquest").resolve():
+        ensure_state_dir()
         if db_path.exists():
             os.chmod(db_path, 0o600)
 

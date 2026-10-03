@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ApiError, healthCheck, listRuns } from '../api/client'
+import { listWorkflows, type WorkflowSummary } from '../api/workflows'
 import type { Run } from '../api/types'
 import { usePolling } from '../hooks/useAsync'
 import type { PaletteCommand } from '../lib/palette'
@@ -12,6 +13,8 @@ interface AppContextValue {
   runsError: ApiError | null
   refreshRuns: () => Promise<void>
   health: Health
+  workflows: WorkflowSummary[]
+  refreshWorkflows: () => Promise<void>
   newRunOpen: boolean
   openNewRun: () => void
   closeNewRun: () => void
@@ -31,6 +34,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [runsLoaded, setRunsLoaded] = useState(false)
   const [runsError, setRunsError] = useState<ApiError | null>(null)
   const [health, setHealth] = useState<Health>('checking')
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [newRunOpen, setNewRunOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -51,7 +55,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const refreshWorkflows = useCallback(async () => {
+    try {
+      setWorkflows(await listWorkflows())
+    } catch {
+      // the Workflows page explains permission and connection problems itself
+    }
+  }, [])
+
   useEffect(() => {
+    void refreshWorkflows()
     void refreshRuns()
     healthCheck()
       .then(() => setHealth('ok'))
@@ -67,6 +80,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       runsError,
       refreshRuns,
       health,
+      workflows,
+      refreshWorkflows,
       newRunOpen,
       openNewRun: () => setNewRunOpen(true),
       closeNewRun: () => setNewRunOpen(false),
@@ -77,7 +92,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       runCommands,
       setRunCommands,
     }),
-    [runs, runsLoaded, runsError, refreshRuns, health, newRunOpen, paletteOpen, helpOpen, runCommands],
+    [runs, runsLoaded, runsError, refreshRuns, health, workflows, refreshWorkflows, newRunOpen, paletteOpen, helpOpen, runCommands],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'metrics' | 'settings' | 'extras' | 'not-found'
+export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'metrics' | 'workflows' | 'workflow' | 'workflow-run' | 'settings' | 'extras' | 'not-found'
 
 export interface Route {
   name: RouteName
@@ -22,6 +22,9 @@ export function parseHash(hash: string): Route {
   if (first === 'runs' && !second) return { name: 'runs', params: {}, query }
   if (first === 'runs' && second && !third) return { name: 'run', params: { id: second }, query }
   if (first === 'engines' && !second) return { name: 'engines', params: {}, query }
+  if (first === 'workflows' && !second) return { name: 'workflows', params: {}, query }
+  if (first === 'workflows' && second === 'runs' && third) return { name: 'workflow-run', params: { id: third }, query }
+  if (first === 'workflows' && second && second !== 'runs' && !third) return { name: 'workflow', params: { id: second }, query }
   if (first === 'metrics' && !second) return { name: 'metrics', params: {}, query }
   if (first === 'settings' && !second) return { name: 'settings', params: {}, query }
   if (first === 'extras' && !third) return { name: 'extras', params: second ? { section: second } : {}, query }
@@ -41,6 +44,9 @@ export function buildHash(name: RouteName, params: Record<string, string> = {}, 
   if (name === 'runs') path = '/runs'
   else if (name === 'run') path = `/runs/${encodeURIComponent(params.id ?? '')}`
   else if (name === 'engines') path = '/engines'
+  else if (name === 'workflows') path = '/workflows'
+  else if (name === 'workflow') path = `/workflows/${encodeURIComponent(params.id ?? 'new')}`
+  else if (name === 'workflow-run') path = `/workflows/runs/${encodeURIComponent(params.id ?? '')}`
   else if (name === 'metrics') path = '/metrics'
   else if (name === 'settings') path = '/settings'
   else if (name === 'extras') path = params.section ? `/extras/${encodeURIComponent(params.section)}` : '/extras'
@@ -60,10 +66,28 @@ export function runHash(id: string, tab?: string): string {
   return buildHash('run', { id }, tab ? { tab } : {})
 }
 
+/**
+ * Navigation guard (unsaved changes). While set, a hash change is only accepted if the guard returns true; otherwise
+ * the previous hash is restored and the guard is told where the user wanted to go.
+ */
+let guard: ((target: string) => boolean) | null = null
+let committedHash = typeof window !== 'undefined' ? window.location.hash : ''
+export function setNavGuard(fn: ((target: string) => boolean) | null): void {
+  guard = fn
+}
+
 export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
   useEffect(() => {
-    const onChange = () => setRoute(parseHash(window.location.hash))
+    const onChange = () => {
+      const target = window.location.hash
+      if (guard && target !== committedHash && !guard(target)) {
+        window.history.replaceState(null, '', committedHash || '#/')
+        return
+      }
+      committedHash = target
+      setRoute(parseHash(target))
+    }
     window.addEventListener('hashchange', onChange)
     onChange()
     return () => window.removeEventListener('hashchange', onChange)
