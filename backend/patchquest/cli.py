@@ -689,6 +689,40 @@ def _cmd_queue(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from patchquest import backup
+    from patchquest.database import get_db_path
+
+    def show(report: backup.VerifyReport) -> None:
+        if args.json:
+            _emit_json(report.to_dict())
+            return
+        print(f"{'ok' if report.ok else 'PROBLEMS'}: schema v{report.schema_version}, " + ", ".join(f"{k} {v}" for k, v in report.counts.items()))
+        for problem in report.problems:
+            print(f"  - {problem}", file=sys.stderr)
+
+    try:
+        if args.backup_cmd == "create":
+            report = backup.create(get_db_path(), Path(args.dest))
+            show(report)
+            return EXIT_OK if report.ok else EXIT_FAILED
+        if args.backup_cmd == "verify":
+            report = backup.verify(Path(args.file))
+            show(report)
+            return EXIT_OK if report.ok else EXIT_FAILED
+        if not args.yes:
+            print("restore replaces the live database with the backup (the current one is kept beside it). Re-run with --yes.", file=sys.stderr)
+            return EXIT_NEEDS_CONFIRMATION
+        kept = backup.restore(Path(args.file), get_db_path())
+        print(f"restored; the previous database was kept at {kept}", file=sys.stderr)
+        return EXIT_OK
+    except (backup.RestoreRefused, FileExistsError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -947,6 +981,17 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--json", action="store_true")
     cn = wsub.add_parser("cancel", help="cancel a run")
     cn.add_argument("run_id")
+    bk = sub.add_parser("backup", help="consistent database backups, verification and restore")
+    bsub = bk.add_subparsers(dest="backup_cmd", required=True)
+    bc = bsub.add_parser("create", help="snapshot the database (safe while PatchQuest is running)")
+    bc.add_argument("dest")
+    bv = bsub.add_parser("verify", help="check a backup (or the live database): integrity, schema, guards, checkpoint checksums")
+    bv.add_argument("file")
+    br = bsub.add_parser("restore", help="replace the database with a verified backup (stop PatchQuest first)")
+    br.add_argument("file")
+    br.add_argument("--yes", action="store_true")
+    for x in (bc, bv, br):
+        x.add_argument("--json", action="store_true")
     wk = sub.add_parser("worker", help="execute queued runs (with queue_mode on); recovers runs whose worker died")
     wk.add_argument("--id", help="worker name (default: host-pid-random)")
     wk.add_argument("--lease", type=float, help="seconds a claimed run stays ours without a heartbeat (default: config)")
@@ -998,7 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

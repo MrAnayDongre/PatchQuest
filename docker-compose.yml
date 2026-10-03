@@ -1,0 +1,33 @@
+# One API, one or more workers, one database file on a shared volume.
+#
+#   docker compose run --rm api patchquest admin init --org Acme --workspace main --owner you   # prints your token once
+#   docker compose up -d --scale worker=3
+#
+# SQLite on a shared volume is safe for processes on ONE host (WAL, busy timeout, exclusive claims). Workers on
+# different hosts need a network database, which PatchQuest does not support yet: see docs/deployment.md.
+services:
+  api:
+    build: .
+    image: patchquest
+    ports: ["127.0.0.1:8000:8000"]   # publish on loopback; put a TLS reverse proxy in front for anything wider
+    environment:
+      PATCHQUEST_QUEUE_MODE: "true"  # the API queues runs; workers execute them
+    volumes:
+      - pq-data:/data
+      - ${PATCHQUEST_REPOS:-./repos}:/repos            # repositories runs may target (set safety.allowed_roots to /repos)
+    restart: unless-stopped
+
+  worker:
+    image: patchquest
+    command: ["patchquest", "worker", "--grace", "60"]
+    environment:
+      PATCHQUEST_QUEUE_MODE: "true"
+    volumes:
+      - pq-data:/data
+      - ${PATCHQUEST_REPOS:-./repos}:/repos
+    depends_on: [api]
+    restart: unless-stopped
+    stop_grace_period: 90s
+
+volumes:
+  pq-data:

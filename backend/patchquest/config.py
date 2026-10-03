@@ -228,17 +228,32 @@ class AppConfig(BaseModel):
     allowed_hosts: list[str] = Field(default_factory=list)
 
 
+_ENV_OVERRIDES: dict[str, tuple[str, Any]] = {
+    "PATCHQUEST_HOST": ("host", str), "PATCHQUEST_PORT": ("port", int),
+    "PATCHQUEST_QUEUE_MODE": ("queue_mode", lambda v: v.strip().lower() in ("1", "true", "yes", "on")),
+    "PATCHQUEST_WORKER_LEASE_SECONDS": ("worker_lease_seconds", float),
+}
+
+
 def load_config(config_path: str | None = None) -> AppConfig:
+    """Config file (if any), then these environment variables on top: PATCHQUEST_HOST, _PORT, _QUEUE_MODE,
+    _WORKER_LEASE_SECONDS (and PATCHQUEST_DB, handled where the database path is resolved). Containers set
+    these instead of mounting a config file."""
     if config_path is None:
         config_path = os.environ.get("PATCHQUEST_CONFIG", "config.yaml")
 
     path = Path(config_path)
+    raw: dict[str, Any] = {}
     if path.exists():
         with open(path) as f:
-            raw: dict[str, Any] = yaml.safe_load(f) or {}
-        return AppConfig(**raw)
-
-    return AppConfig()
+            raw = yaml.safe_load(f) or {}
+    for var, (field_name, cast) in _ENV_OVERRIDES.items():
+        if var in os.environ:
+            try:
+                raw[field_name] = cast(os.environ[var])
+            except ValueError as exc:
+                raise ValueError(f"{var} is not valid: {exc}") from None
+    return AppConfig(**raw)
 
 
 _config: AppConfig | None = None

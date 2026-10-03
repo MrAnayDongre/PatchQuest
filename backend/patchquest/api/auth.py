@@ -52,7 +52,8 @@ def _unauthorized(request: Request, why: str) -> HTTPException:
 
 
 async def authenticate_request(request: Request) -> Principal | None:
-    if request.url.path in EXEMPT_PATHS or request.method == "OPTIONS":
+    # Only /api/* is protected: everything else is the static UI (public files) and the health probes.
+    if request.url.path in EXEMPT_PATHS or request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
         return None
     supplied, legacy = _supplied_token(request), configured_token()
     with get_db() as conn:

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from patchquest.api.auth import authenticate_request, local_scope, require
@@ -89,6 +92,26 @@ for _router, _read, _write in (
     app.include_router(_router, dependencies=[Depends(local_scope(_read, _write))])
 
 
+def _mount_ui(application: FastAPI) -> None:
+    """Serve the built frontend when ``PATCHQUEST_STATIC_DIR`` points at it (the container does). Unknown non-API
+    paths return the app shell so client-side routes survive a refresh; unknown /api paths stay 404."""
+    static = os.environ.get("PATCHQUEST_STATIC_DIR")
+    if not static or not (Path(static) / "index.html").is_file():
+        return
+    root = Path(static).resolve()
+    if (root / "assets").is_dir():
+        application.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+
+    @application.get("/{path:path}", include_in_schema=False)
+    async def spa(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(404, "Not found")
+        candidate = (root / path).resolve()
+        if path and candidate.is_file() and candidate.is_relative_to(root):  # never serve outside the static root
+            return FileResponse(candidate)
+        return FileResponse(root / "index.html")
+
+
 @app.get("/live", include_in_schema=False)
 async def live() -> dict[str, str]:
     """The process is up. Says nothing about whether it can do useful work (see /ready)."""
@@ -108,6 +131,9 @@ async def ready() -> JSONResponse:
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version="0.1.0")
+
+
+_mount_ui(app)
 
 
 if __name__ == "__main__":
