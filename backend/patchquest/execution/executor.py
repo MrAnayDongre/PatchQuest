@@ -84,7 +84,11 @@ def _kill_group(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[str, str] | None) -> dict[str, Any]:
+CANCEL_POLL_S = 0.05  # how quickly a cancel request is noticed while a child is running
+
+
+def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[str, str] | None,
+         cancel: threading.Event | None = None) -> dict[str, Any]:
     started = time.monotonic()
     try:
         proc = subprocess.Popen(
@@ -98,15 +102,24 @@ def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[s
     out, err = _Capture(proc.stdout, max_output), _Capture(proc.stderr, max_output)
     out.start()
     err.start()
-    timed_out = False
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _kill_group(proc)
-        proc.wait()
+    timed_out = cancelled = False
+    deadline = started + timeout
+    while True:
+        try:
+            proc.wait(timeout=max(0.0, min(CANCEL_POLL_S, deadline - time.monotonic())))
+            break
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+            elif time.monotonic() >= deadline:
+                timed_out = True
+            else:
+                continue
+            _kill_group(proc)
+            proc.wait()
+            break
     # Surviving grandchildren in the group would keep the pipes open; reap them.
-    if not timed_out:
+    if not (timed_out or cancelled):
         _kill_group_quietly(proc)
     out.join(timeout=5)
     err.join(timeout=5)
@@ -114,11 +127,15 @@ def _run(args: list[str], cwd: str, timeout: float, max_output: int, env: dict[s
     stderr = err.text
     if timed_out:
         stderr = (stderr + f"\nCommand timed out after {timeout:g}s and was killed").strip()
-    return _result(
-        proc.returncode == 0 and not timed_out,
-        -1 if timed_out else proc.returncode,
+    if cancelled:
+        stderr = (stderr + "\nCommand was cancelled and killed").strip()
+    result = _result(
+        proc.returncode == 0 and not (timed_out or cancelled),
+        -1 if (timed_out or cancelled) else proc.returncode,
         out.text, stderr, out.truncated or err.truncated, timed_out, started,
     )
+    result["cancelled"] = cancelled
+    return result
 
 
 def _kill_group_quietly(proc: subprocess.Popen) -> None:
@@ -141,12 +158,12 @@ def _result(success: bool, code: int, stdout: str, stderr: str, truncated: bool,
 
 
 def run_argv(argv: list[str], cwd: str, timeout: float = 60, max_output: int = 1_000_000,
-             env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Run ``argv`` directly (no shell)."""
-    return _run(list(argv), cwd, timeout, max_output, env)
+             env: dict[str, str] | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
+    """Run ``argv`` directly (no shell). Setting ``cancel`` kills the whole process group promptly."""
+    return _run(list(argv), cwd, timeout, max_output, env, cancel)
 
 
 def run_shell(command: str, cwd: str, timeout: float = 60, max_output: int = 1_000_000,
-              env: dict[str, str] | None = None) -> dict[str, Any]:
+              env: dict[str, str] | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
     """Run ``command`` through ``/bin/sh``. Only for commands a human approved."""
-    return _run(["/bin/sh", "-c", command], cwd, timeout, max_output, env)
+    return _run(["/bin/sh", "-c", command], cwd, timeout, max_output, env, cancel)

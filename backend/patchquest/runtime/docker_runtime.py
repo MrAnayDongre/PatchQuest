@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,8 @@ class DockerRuntime(RuntimeBase):
         self.repo_path = repo_path
         self._sandbox_path: Path | None = None
 
-    def run_command(self, command: str, cwd: str, timeout: int = 60) -> dict[str, Any]:
+    def run_command(self, command: str, cwd: str, timeout: int = 60,
+                    cancel: threading.Event | None = None) -> dict[str, Any]:
         if not self.is_available():
             return {
                 "success": False, "returncode": -1,
@@ -69,10 +71,11 @@ class DockerRuntime(RuntimeBase):
         # The docker CLI runs through the bounded, process-group-aware executor. If it times out the
         # CLI is killed, but that does not stop the container, so the container is removed explicitly.
         result = run_argv(docker_cmd, cwd=str(workspace), timeout=timeout + 10, max_output=output_limit,
-                          env=scrubbed_env(passthrough=("DOCKER_*", "XDG_RUNTIME_DIR")))
-        if result.get("timed_out"):
+                          env=scrubbed_env(passthrough=("DOCKER_*", "XDG_RUNTIME_DIR")), cancel=cancel)
+        if result.get("timed_out") or result.get("cancelled"):
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30, check=False)
-            result["stderr"] = f"Docker command timed out after {timeout}s; container removed"
+            result["stderr"] = (f"Docker command timed out after {timeout}s; container removed" if result.get("timed_out")
+                                else "Docker command was cancelled; container removed")
         return result
 
     def is_available(self) -> bool:

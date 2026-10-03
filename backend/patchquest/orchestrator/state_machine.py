@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import traceback
 import uuid
@@ -77,6 +78,11 @@ def _tool_available(command: str) -> bool:
     except ValueError:
         return False
     return bool(argv) and shutil.which(argv[0], path=scrubbed_env().get("PATH")) is not None
+
+
+class RunCancelledError(PatchQuestError):
+    def __init__(self) -> None:
+        super().__init__(FailureKind.USER_CANCELLED, "Run cancelled")
 
 
 class PhaseBlockedError(Exception):
@@ -164,6 +170,8 @@ class RunStateMachine:
         self._failure: Failure | None = None  # the first thing that went wrong; becomes the run's failure kind
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
+        self._cancel_flag = threading.Event()  # the same signal for code running in worker threads (subprocesses)
+        self._critical = False  # True while an operation that must not be interrupted half-way is running
         self.attempt = 1  # incremented by resume; every event carries it
         self.correlation_id = uuid.uuid4().hex  # groups the events of this execution
         self._phase_event_uid: str | None = None  # causation for everything inside the current phase
@@ -176,6 +184,7 @@ class RunStateMachine:
     def cancel(self) -> None:
         """Request cooperative cancellation; takes effect at the next phase boundary."""
         self._cancelled.set()
+        self._cancel_flag.set()
         self._move(RunStatus.CANCEL_REQUESTED, "cancel requested", actor="user")
         for event in self._approval_events.values():  # unblock anything waiting on a human
             event.set()
@@ -217,6 +226,9 @@ class RunStateMachine:
                     await self._checkpoint(phase)
                     continue
                 await self._run_phase(phase)
+                if self._cancelled.is_set() and self.phase_statuses[phase] == PhaseStatus.FAILED:
+                    await self._fail_run("Run cancelled", status="cancelled")
+                    return
                 if self.phase_statuses[phase] == PhaseStatus.FAILED:
                     await self._fail_run(f"Phase {phase.value} failed")
                     return
@@ -224,6 +236,10 @@ class RunStateMachine:
                     self._blocked = True
                 await self._checkpoint(phase)
 
+            if self._cancelled.is_set() and self.ctx.outcome != "applied":
+                # Cancelled during the final phase before anything landed: the run did not complete.
+                await self._fail_run("Run cancelled", status="cancelled")
+                return
             await self._complete_run()
         except Exception as e:
             logger.error(f"Run {self.run_id} crashed: {e}\n{traceback.format_exc()}")
@@ -286,6 +302,28 @@ class RunStateMachine:
             await asyncio.to_thread(ws.adopt, {r: v["base"] for r, v in files.items()},
                                     {r: v["current"] for r, v in files.items()})
 
+    async def _interruptible(self, work: Any) -> None:
+        """Await ``work`` but stop it promptly if the run is cancelled (e.g. a model call in flight).
+
+        Work in a critical section (the repository promotion) is never cut off half-way: it is allowed to
+        finish, and the cancellation takes effect right after."""
+        task = asyncio.ensure_future(work)
+        waiter = asyncio.ensure_future(self._cancelled.wait())
+        try:
+            await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            if not task.done():
+                while self._critical and not task.done():
+                    await asyncio.wait({task}, timeout=0.05)
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)  # let it unwind
+                    raise RunCancelledError
+            task.result()
+        finally:
+            waiter.cancel()
+            if not task.done():
+                task.cancel()
+
     async def _skip(self, phase: Phase, message: str) -> None:
         self.phase_statuses[phase] = PhaseStatus.SKIPPED
         await self._emit("phase_started", phase=phase.value, status="running", message=f"Starting {phase.value}")
@@ -301,7 +339,7 @@ class RunStateMachine:
         try:
             handler = getattr(self, f"_phase_{phase.value}", None)
             if handler:
-                await handler()
+                await self._interruptible(handler())
             else:
                 await asyncio.sleep(0.1)
 
@@ -452,10 +490,10 @@ class RunStateMachine:
             if not runtime.is_available():
                 return {"success": False, "returncode": -1, "stdout": "",
                         "stderr": "Docker runtime requested but Docker is not available", "truncated": False}
-            return runtime.run_command(command, cwd, timeout=timeout)
+            return runtime.run_command(command, cwd, timeout=timeout, cancel=self._cancel_flag)
         from patchquest.tools.command_runner import run_command_safe
 
-        return run_command_safe(command, cwd, timeout=timeout, approved=approved)
+        return run_command_safe(command, cwd, timeout=timeout, approved=approved, cancel=self._cancel_flag)
 
     async def _run_commands(self, commands: list[str]) -> list[dict[str, Any]]:
         return [await self._exec(cmd) for cmd in commands]
@@ -786,7 +824,11 @@ class RunStateMachine:
         # Journal intent *before* touching the real repository: a crash between here and the
         # completion event is then recognisable, and resume can verify what actually landed.
         await self._emit("promotion_started", phase="final_report", payload={"files": manifest})
-        result = await asyncio.to_thread(ws.promote)
+        self._critical = True  # the write is atomic and journaled; never abandon it half-way
+        try:
+            result = await asyncio.to_thread(ws.promote)
+        finally:
+            self._critical = False
         if not result.success:
             await self._emit("promotion_failed", phase="final_report", message=str(result.error))
             ctx.outcome = "conflict"

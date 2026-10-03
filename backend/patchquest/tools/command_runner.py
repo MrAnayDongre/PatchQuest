@@ -7,6 +7,7 @@ approves). Automatic commands run without a shell, in a scrubbed environment.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from patchquest.config import get_config
@@ -26,6 +27,7 @@ def run_command_safe(
     max_output: int | None = None,
     env: dict[str, str] | None = None,
     approved: bool = False,
+    cancel: threading.Event | None = None,
 ) -> dict[str, Any]:
     config = get_config()
     timeout = timeout or config.safety.max_command_timeout
@@ -40,8 +42,8 @@ def run_command_safe(
 
     child_env = env if env is not None else scrubbed_env(passthrough=tuple(config.safety.env_passthrough))
     if decision.shell_syntax or not decision.argv:
-        result = run_shell(command, cwd, timeout, max_output, child_env)
+        result = run_shell(command, cwd, timeout, max_output, child_env, cancel)
     else:
-        result = run_argv(decision.argv, cwd, timeout, max_output, child_env)
+        result = run_argv(decision.argv, cwd, timeout, max_output, child_env, cancel)
     result["risk"] = decision.level.value
     return result

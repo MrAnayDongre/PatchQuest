@@ -7,6 +7,7 @@ list of responses (dict/str, or a callable taking the messages), and records eve
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -88,5 +89,7 @@ class ScriptedProvider(ProviderBase):
             script.cursor[role] = index + 1
             item = queue[index]
             content = item(messages) if callable(item) else item
+            if inspect.isawaitable(content):  # a responder may be async, e.g. to simulate a slow model
+                content = await content
         text = content if isinstance(content, str) else json.dumps(content)
         return ProviderResponse(content=text, usage={"prompt_tokens": 0, "completion_tokens": 0}, model=config.model)
