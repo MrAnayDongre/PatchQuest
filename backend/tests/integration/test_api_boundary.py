@@ -145,5 +145,6 @@ class TestRecovery:
             appr = conn.execute("SELECT status FROM approvals WHERE id = 'a1'").fetchone()
             ev = conn.execute("SELECT type, phase FROM run_events WHERE run_id = ?", (rid,)).fetchall()
         assert run["status"] == "interrupted" and appr["status"] == "expired"
-        assert [(e["type"], e["phase"]) for e in ev] == [("run_interrupted", "testing")]
+        assert ("run_interrupted", "testing") in [(e["type"], e["phase"]) for e in ev]
+        assert ev[0]["type"] == "run_state_changed"  # the typed transition is recorded first
         assert recover_interrupted_runs() == 0  # idempotent

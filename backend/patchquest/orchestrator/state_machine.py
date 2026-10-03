@@ -15,13 +15,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from patchquest.config import get_config
-from patchquest.database import get_db, insert_event, now_iso
+from patchquest.database import get_db, now_iso
+from patchquest.domain.runs import IllegalTransition, RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
+from patchquest.persistence import ledger
+from patchquest.persistence.runs import transition
 from patchquest.tools.secret_guard import redact_secrets
 
 if TYPE_CHECKING:
@@ -144,6 +148,9 @@ class RunStateMachine:
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
+        self.attempt = 1  # incremented by resume; every event carries it
+        self.correlation_id = uuid.uuid4().hex  # groups the events of this execution
+        self._phase_event_uid: str | None = None  # causation for everything inside the current phase
         self.ctx.event_sink = self._publish
 
     async def _publish(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -153,10 +160,29 @@ class RunStateMachine:
     def cancel(self) -> None:
         """Request cooperative cancellation; takes effect at the next phase boundary."""
         self._cancelled.set()
+        self._move(RunStatus.CANCEL_REQUESTED, "cancel requested", actor="user")
         for event in self._approval_events.values():  # unblock anything waiting on a human
             event.set()
 
+    def _move(self, target: RunStatus, reason: str, *, actor: str = "runtime",
+              fields: dict[str, Any] | None = None) -> bool:
+        """Change the run's status through the validated table. False when that is no longer legal
+        (e.g. the run already finished), which callers treat as 'nothing to do'."""
+        try:
+            with get_db() as conn:
+                done = transition(conn, self.run_id, target, actor=actor, reason=reason, attempt=self.attempt,
+                                  correlation_id=self.correlation_id, fields=fields)
+            event_bus.emit_nowait(self.run_id, {
+                "id": done.event_id, "event_uid": done.event_uid, "type": "run_state_changed", "run_id": self.run_id,
+                "phase": None, "status": target.value, "message": reason,
+                "payload": {"from": done.previous.value, "to": target.value}})
+            return True
+        except IllegalTransition as exc:
+            logger.info("status change skipped: %s", exc)
+            return False
+
     async def execute(self) -> None:
+        self._move(RunStatus.RUNNING, "execution started")
         try:
             for phase in PHASE_ORDER:
                 if self._cancelled.is_set():
@@ -241,6 +267,7 @@ class RunStateMachine:
             "approval_id": approval_id, "type": kind, "command": safe_command, "reason": reason})
 
         timeout = get_config().safety.approval_timeout_seconds
+        self._move(RunStatus.WAITING_APPROVAL, f"waiting for a decision: {reason}")
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             approved = self._approval_results.get(approval_id, False) and not self._cancelled.is_set()
@@ -253,6 +280,8 @@ class RunStateMachine:
                              payload={"approval_id": approval_id})
         finally:
             self._approval_events.pop(approval_id, None)
+            if not self._cancelled.is_set():
+                self._move(RunStatus.RUNNING, "decision received")
         self.ctx.approvals.append({"id": approval_id, "type": kind, "command": safe_command, "approved": approved})
         return approved
 
@@ -642,11 +671,8 @@ class RunStateMachine:
 
     # ------------------------------------------------------------- run lifecycle
     async def _complete_run(self) -> None:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE runs SET status = ?, completed_at = ?, updated_at = ?, outcome = ?, verdict = ? WHERE id = ?",
-                ("completed", now_iso(), now_iso(), self.ctx.outcome, self.ctx.verdict, self.run_id),
-            )
+        self._move(RunStatus.COMPLETED, "all phases finished",
+                   fields={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
         await self._emit("run_completed", message="Run completed successfully",
                          payload={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
 
@@ -668,11 +694,8 @@ class RunStateMachine:
         except Exception as report_exc:
             logger.warning("Failed to generate report for failed run %s: %s", self.run_id, report_exc)
 
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE runs SET status = ?, completed_at = ?, updated_at = ?, outcome = ?, verdict = ? WHERE id = ?",
-                (status, now_iso(), now_iso(), self.ctx.outcome or "rejected", self.ctx.verdict, self.run_id),
-            )
+        self._move(RunStatus(status), reason,
+                   fields={"outcome": self.ctx.outcome or "rejected", "verdict": self.ctx.verdict})
         await self._emit("run_failed", message=f"Run failed: {reason}")
 
     def _update_run_phase(self, phase: str) -> None:
@@ -686,10 +709,15 @@ class RunStateMachine:
                     status: str | None = None, message: str | None = None,
                     payload: dict[str, Any] | None = None) -> None:
         with get_db() as conn:
-            event_id = insert_event(conn, self.run_id, event_type, phase, status, message, payload)
+            event_id, event_uid = ledger.append(
+                conn, self.run_id, event_type, phase=phase, status=status, message=message, payload=payload,
+                attempt=self.attempt, correlation_id=self.correlation_id, causation_id=self._phase_event_uid)
+        if event_type == "phase_started":
+            self._phase_event_uid = event_uid
 
         event = {
             "id": event_id,
+            "event_uid": event_uid,
             "type": event_type,
             "run_id": self.run_id,
             "phase": phase,

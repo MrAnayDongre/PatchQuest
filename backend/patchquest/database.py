@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from patchquest.config import get_config
+from patchquest.persistence import ledger
 
 _DB_PATH: Path | None = None
+BUSY_TIMEOUT_S = 10.0  # wait for a competing writer instead of failing with 'database is locked'
 
 
 def resolve_db_path(configured: str | None) -> Path:
@@ -42,10 +42,12 @@ def set_db_path(path: Path) -> None:
 
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
-    conn = sqlite3.connect(str(get_db_path()))
+    conn = sqlite3.connect(str(get_db_path()), timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")  # WAL + NORMAL: durable across process crashes, fast commits
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
     try:
         yield conn
         conn.commit()
@@ -57,38 +59,27 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
 
 
 def init_db() -> None:
+    from patchquest.persistence.migrations import migrate
+    from patchquest.persistence.schema import MIGRATIONS
+
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
-        conn.executescript(SCHEMA)
-        _migrate(conn)
+        migrate(conn, MIGRATIONS, db_path)
     from patchquest.memory.code_graph import init_code_graph
     init_code_graph()
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Add columns that may not exist in older databases."""
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-    migrations = [
-        ("provider", "TEXT DEFAULT 'mock'"),
-        ("model", "TEXT"),
-        ("runtime_mode", "TEXT DEFAULT 'local'"),
-        ("outcome", "TEXT"),
-        ("verdict", "TEXT"),
-        ("base_url", "TEXT"),
-    ]
-    for col_name, col_def in migrations:
-        if col_name not in existing:
-            conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_def}")
-
-    sched_existing = {row[1] for row in conn.execute("PRAGMA table_info(scheduled_tasks)").fetchall()}
-    sched_migrations = [
-        ("provider", "TEXT DEFAULT 'mock'"),
-        ("model", "TEXT"),
-    ]
-    for col_name, col_def in sched_migrations:
-        if col_name not in sched_existing:
-            conn.execute(f"ALTER TABLE scheduled_tasks ADD COLUMN {col_name} {col_def}")
+# Columns older databases lack; migration 1 adds them.
+LEGACY_RUN_COLUMNS = {
+    "provider": "TEXT DEFAULT 'mock'",
+    "model": "TEXT",
+    "runtime_mode": "TEXT DEFAULT 'local'",
+    "outcome": "TEXT",
+    "verdict": "TEXT",
+    "base_url": "TEXT",
+}
+LEGACY_SCHEDULE_COLUMNS = {"provider": "TEXT DEFAULT 'mock'", "model": "TEXT"}
 
 
 SCHEMA = """
@@ -284,7 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_task ON calendar_events(scheduled
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return ledger.now_iso()
 
 
 def insert_event(
@@ -295,10 +286,7 @@ def insert_event(
     status: str | None = None,
     message: str | None = None,
     payload: dict[str, Any] | None = None,
+    **attribution: Any,
 ) -> int:
-    cursor = conn.execute(
-        """INSERT INTO run_events (run_id, type, phase, status, message, payload_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (run_id, event_type, phase, status, message, json.dumps(payload) if payload else None, now_iso()),
-    )
-    return cursor.lastrowid  # type: ignore
+    return ledger.append(conn, run_id, event_type, phase=phase, status=status, message=message,
+                         payload=payload, **attribution)[0]

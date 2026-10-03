@@ -38,6 +38,17 @@ def unattended_approvals():
     set_config(cfg)
 
 
+def fetch_ledger(run_id):
+    from patchquest.persistence import ledger
+
+    with get_db() as conn:
+        return ledger.read(conn, run_id)
+
+
+def status_trail(run_id):
+    return [e["payload"]["to"] for e in fetch_ledger(run_id) if e["type"] == "run_state_changed"]
+
+
 @pytest.fixture
 def repo(tmp_path):
     return make_calc_repo(tmp_path / "repo")
@@ -56,6 +67,17 @@ class TestHappyPath:
         seq = event_types(rid)
         assert seq.index("patch_staged") < seq.index("tests_completed") < seq.index("patch_applied")
         assert sm.ctx.applied_files == ["calc.py"] and sm.ctx.repair_rounds == 0
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_is_recorded_as_validated_transitions_with_attribution(self, repo):
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
+        assert status_trail(rid) == ["running", "completed"]
+        events = fetch_ledger(rid)
+        assert {e["correlation_id"] for e in events if e["type"] != "run_created"} == {sm.correlation_id}
+        assert len({e["event_uid"] for e in events if e["event_uid"]}) == len([e for e in events if e["event_uid"]])
+        started = {e["phase"]: e["event_uid"] for e in events if e["type"] == "phase_started"}
+        inside = next(e for e in events if e["type"] == "patch_staged")
+        assert inside["causation_id"] == started["patching"]  # inside a phase, caused by its start
 
     @pytest.mark.asyncio
     async def test_real_repo_is_untouched_while_tests_run(self, repo):
@@ -136,6 +158,7 @@ class TestRepairLoop:
             {"edits": [], "create": [], "delete": [], "rationale": ""}]}, wait_for=approver)
         assert run_row(rid)["outcome"] == "applied"
         assert (repo / "calc.py").read_text().endswith("return a * b\n")
+        assert status_trail(rid) == ["running", "waiting_approval", "running", "completed"]
 
 
 class TestBaselineComparison:
@@ -271,6 +294,7 @@ class TestLifecycleSemantics:
         sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]}, wait_for=canceller)
         assert run_row(rid)["status"] == "cancelled"
         assert (repo / "calc.py").read_text() == CALC_BUG
+        assert status_trail(rid) == ["running", "cancel_requested", "cancelled"]
 
     @pytest.mark.asyncio
     async def test_model_failure_marks_run_failed_with_a_report(self, repo):
