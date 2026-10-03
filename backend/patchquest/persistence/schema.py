@@ -137,6 +137,37 @@ def _identity(conn: sqlite3.Connection) -> None:
                  f"VALUES ('ws_local', 'org_local', 'Local', {now})")
 
 
+def _workflows(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS workflows (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
+            version INTEGER NOT NULL, definition_json TEXT NOT NULL, trigger_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active', created_by TEXT, created_at TEXT NOT NULL,
+            UNIQUE (workspace_id, name, version));
+        CREATE INDEX IF NOT EXISTS idx_workflows_trigger ON workflows(workspace_id, trigger_type, status);
+        CREATE TABLE IF NOT EXISTS workflow_runs (
+            id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflows(id), workspace_id TEXT NOT NULL,
+            status TEXT NOT NULL, trigger_json TEXT NOT NULL, trigger_key TEXT, vars_json TEXT NOT NULL,
+            created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, error TEXT);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wfruns_trigger ON workflow_runs(workflow_id, trigger_key) WHERE trigger_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_wfruns_ws ON workflow_runs(workspace_id, created_at);
+        CREATE TABLE IF NOT EXISTS workflow_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id),
+            node_id TEXT NOT NULL, visit INTEGER NOT NULL, status TEXT NOT NULL, output_json TEXT, error TEXT,
+            started_at TEXT, finished_at TEXT, wait_kind TEXT, wait_key TEXT, wake_at TEXT, child_run_id TEXT,
+            idempotency_key TEXT, decision TEXT, decided_by TEXT, UNIQUE (workflow_run_id, node_id, visit));
+        CREATE INDEX IF NOT EXISTS idx_wfsteps_wait ON workflow_steps(status, wait_kind, wait_key);
+        CREATE TABLE IF NOT EXISTS workflow_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id),
+            type TEXT NOT NULL, node_id TEXT, actor TEXT NOT NULL, message TEXT, payload_json TEXT, created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_wfevents_run ON workflow_events(workflow_run_id, id);
+        CREATE TRIGGER IF NOT EXISTS workflow_events_no_update BEFORE UPDATE ON workflow_events
+            BEGIN SELECT RAISE(ABORT, 'workflow_events is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS workflow_events_no_delete BEFORE DELETE ON workflow_events
+            BEGIN SELECT RAISE(ABORT, 'workflow_events is append-only'); END;
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -145,4 +176,5 @@ MIGRATIONS = [
     Migration(5, "run lineage and per-run overrides", _lineage),
     Migration(6, "approval decisions, expiry and grants", _approvals),
     Migration(7, "organisations, workspaces, principals, tokens and audit log", _identity),
+    Migration(9, "workflows, runs, steps and events", _workflows),  # 8 is reserved for connector tables
 ]
