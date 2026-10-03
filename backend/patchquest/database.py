@@ -64,10 +64,21 @@ def init_db() -> None:
 
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    _make_private(db_path)
     with get_db() as conn:
         migrate(conn, MIGRATIONS, db_path)
     from patchquest.memory.code_graph import init_code_graph
     init_code_graph()
+
+
+def _make_private(db_path: Path) -> None:
+    """Run history holds task text, command output and file contents: keep PatchQuest's own state
+    directory owner-only. A directory the user chose elsewhere is theirs to manage and is left alone."""
+    state_dir = Path.home() / ".patchquest"
+    if db_path.parent.resolve() == state_dir.resolve():
+        os.chmod(state_dir, 0o700)
+        if db_path.exists():
+            os.chmod(db_path, 0o600)
 
 
 # Columns older databases lack; migration 1 adds them.

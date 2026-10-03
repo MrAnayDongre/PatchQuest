@@ -13,7 +13,9 @@ import os
 import sys
 from typing import Any
 
-EXIT_OK, EXIT_FAILED, EXIT_REJECTED, EXIT_INTERRUPTED, EXIT_USAGE = 0, 1, 2, 3, 64
+from patchquest.database import get_db
+
+EXIT_OK, EXIT_FAILED, EXIT_REJECTED, EXIT_INTERRUPTED, EXIT_NEEDS_CONFIRMATION, EXIT_USAGE = 0, 1, 2, 3, 4, 64
 GOOD_OUTCOMES = {"applied", "no_changes", "read_only"}
 ICON = {"ok": "✓", "info": "·", "warn": "!", "fail": "✗"}
 
@@ -83,16 +85,21 @@ async def _run(args: argparse.Namespace) -> int:
     if not args.json:
         print(f"run {run_id}  provider={args.provider} runtime={args.runtime}", file=sys.stderr)
     svc.launch(run_id)
+    return await _follow(svc, run_id, args.json, args.no_input)
+
+
+async def _follow(svc, run_id: str, json_mode: bool, no_input: bool, after_id: int = 0) -> int:
+    """Stream a launched run to the terminal, then summarise it. Returns the process exit code."""
     try:
-        async for event in svc.stream(run_id, heartbeat=1.0):
+        async for event in svc.stream(run_id, after_id=after_id, heartbeat=1.0):
             if event["type"] == "ping":
                 continue
-            if args.json:
+            if json_mode:
                 _emit_json(event)
             elif (line := _fmt_event(event)):
                 print(line, file=sys.stderr)
             if event["type"] == "approval_requested":
-                asyncio.get_running_loop().create_task(_approve_interactively(svc, run_id, event, args.no_input))
+                asyncio.get_running_loop().create_task(_approve_interactively(svc, run_id, event, no_input))
     except (KeyboardInterrupt, asyncio.CancelledError):
         svc.cancel(run_id)
         await svc.shutdown()
@@ -101,7 +108,7 @@ async def _run(args: argparse.Namespace) -> int:
     report = svc.report(run_id) or {}
     summary = {"run_id": run_id, "status": final["status"], "outcome": final.get("outcome"),
                "verdict": final.get("verdict"), "has_diff": bool(report.get("diff_patch"))}
-    if args.json:
+    if json_mode:
         _emit_json({"type": "summary", **summary})
     else:
         print(f"\nstatus={summary['status']} outcome={summary['outcome']} verdict={summary['verdict']}", file=sys.stderr)
@@ -111,6 +118,73 @@ async def _run(args: argparse.Namespace) -> int:
     if final["status"] != "completed":
         return EXIT_FAILED
     return EXIT_OK if final.get("outcome") in GOOD_OUTCOMES else EXIT_REJECTED
+
+
+async def _resume(args: argparse.Namespace) -> int:
+    from patchquest.application import get_service
+    from patchquest.runtime.resume import ConfirmationRequired, NotResumable, RecoveryCategory, plan_resume
+
+    svc = get_service()
+    try:
+        plan = plan_resume(args.run_id)
+    except LookupError:
+        print(f"error: no run {args.run_id}\nhint: `patchquest status` lists recent runs", file=sys.stderr)
+        return EXIT_USAGE
+    explanation = plan.explain()
+    if args.json:
+        _emit_json({"type": "resume_plan", **explanation})
+    else:
+        print(f"resume {args.run_id}", file=sys.stderr)
+        for key, value in explanation.items():
+            if key not in ("REASONS", "CATEGORY"):
+                print(f"  {key:<22} {value}", file=sys.stderr)
+        for reason in plan.reasons:
+            print(f"  - {reason}", file=sys.stderr)
+    if plan.category is RecoveryCategory.NON_RECOVERABLE:
+        return EXIT_FAILED
+    if args.plan:
+        return EXIT_NEEDS_CONFIRMATION if plan.needs_confirmation else EXIT_OK
+    with get_db() as conn:
+        seen = conn.execute("SELECT COALESCE(MAX(id), 0) FROM run_events WHERE run_id = ?", (args.run_id,)).fetchone()[0]
+    try:
+        svc.resume(args.run_id, accept_drift=args.accept_drift, rollback=args.rollback)
+    except ConfirmationRequired as exc:
+        flag = "--rollback" if exc.plan.category is RecoveryCategory.ROLLBACK_REQUIRED else "--accept-drift"
+        print(f"\nnot resumed: a person must decide first. Review the above, then re-run with {flag}.", file=sys.stderr)
+        return EXIT_NEEDS_CONFIRMATION
+    except NotResumable as exc:
+        print(f"\nnot resumed: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    return await _follow(svc, args.run_id, args.json, args.no_input, after_id=seen)
+
+
+def _cmd_checkpoints(args: argparse.Namespace) -> int:
+    from patchquest.persistence import checkpoints
+
+    with get_db() as conn:
+        rows = checkpoints.describe(conn, args.run_id)
+    if args.json:
+        _emit_json(rows)
+        return EXIT_OK
+    if not rows:
+        print("(no checkpoints: the run has not completed a phase yet)", file=sys.stderr)
+    for r in rows:
+        print(f"#{r['seq']:<3} after {r['phase']:<17} attempt {r['attempt']}  {r['bytes']:>8} B  {r['created_at'][:19]}  {r['status']}")
+    return EXIT_OK if all(r["status"] == "ok" for r in rows) else EXIT_FAILED
+
+
+def _cmd_events(args: argparse.Namespace) -> int:
+    from patchquest.persistence import ledger
+
+    with get_db() as conn:
+        rows = ledger.read(conn, args.run_id, after=args.after, limit=args.limit)
+    for e in rows:
+        if args.json:
+            _emit_json(e)
+        else:
+            print(f"{e['id']:>5} {e['created_at'][11:19]} a{e['attempt']} {(e.get('actor') or '-'):<9} "
+                  f"{e['type']:<22} {(e.get('phase') or ''):<16} {e.get('message') or ''}")
+    return EXIT_OK
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -350,6 +424,21 @@ def build_parser() -> argparse.ArgumentParser:
         x.add_argument("run_id")
         if name == "inspect":
             x.add_argument("--json", action="store_true")
+    rs = sub.add_parser("resume", help="continue an interrupted run from its last checkpoint")
+    rs.add_argument("run_id")
+    rs.add_argument("--plan", action="store_true", help="only explain what resuming would do")
+    rs.add_argument("--accept-drift", action="store_true", help="proceed although files changed while the run was down")
+    rs.add_argument("--rollback", action="store_true", help="first undo a half-applied promotion")
+    rs.add_argument("--no-input", action="store_true", help="deny every approval request instead of prompting")
+    rs.add_argument("--json", action="store_true")
+    cps = sub.add_parser("checkpoints", help="list a run's checkpoints and whether each verifies")
+    cps.add_argument("run_id")
+    cps.add_argument("--json", action="store_true")
+    evs = sub.add_parser("events", help="the raw event ledger of a run")
+    evs.add_argument("run_id")
+    evs.add_argument("--after", type=int, default=0, help="only events after this id")
+    evs.add_argument("--limit", type=int, default=1000)
+    evs.add_argument("--json", action="store_true")
     a = sub.add_parser("approve", help="answer an approval request on a running server")
     a.add_argument("run_id")
     a.add_argument("approval_id")
@@ -391,7 +480,9 @@ def main(argv: list[str] | None = None) -> int:
     _bootstrap(args.config)
     if args.cmd == "run":
         return asyncio.run(_run(args))
-    handlers = {"status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    if args.cmd == "resume":
+        return asyncio.run(_resume(args))
+    handlers = {"checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

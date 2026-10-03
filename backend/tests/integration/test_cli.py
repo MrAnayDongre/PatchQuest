@@ -125,3 +125,72 @@ def test_database_never_defaults_into_the_working_directory(tmp_path, monkeypatc
     assert resolve_db_path(None).name == "patchquest.db" and str(resolve_db_path(None)) == "patchquest.db"
     monkeypatch.setenv("PATCHQUEST_DB", str(tmp_path / "x.db"))
     assert resolve_db_path(None) == tmp_path / "x.db"
+
+
+class TestResumeCommands:
+    """Crash a run in-process, then drive recovery purely through the CLI."""
+
+    @pytest.fixture
+    def crashed(self, env):
+        import asyncio
+
+        from tests.support import FIX, after_event, crash_run
+
+        cfg, repo = env
+        (repo / "README.md").write_text("# calc\n")
+        review = {"minimal_change": True, "unrelated_changes": False, "risk_notes": "", "missing_tests": [],
+                  "recommendation": "approve"}
+        run_id = asyncio.run(crash_run(repo, {"planner": [PLAN], "coder": [FIX], "reviewer": [review]},
+                                       after_event("checkpoint_created", phase="patching"),
+                                       task="Fix add() in calc.py so it returns the sum"))
+        return cfg, repo, run_id
+
+    def test_plan_only_explains_and_changes_nothing(self, crashed, capsys):
+        cfg, repo, run_id = crashed
+        assert cli.main(["--config", cfg, "resume", run_id, "--plan"]) == cli.EXIT_OK
+        err = capsys.readouterr().err
+        for heading in ("LAST_CHECKPOINT", "INTERRUPTED_OPERATION", "REPO_DRIFT", "SIDE_EFFECT_CERTAINTY",
+                        "RECOVERY_ACTION", "APPROVAL_REQUIRED"):
+            assert heading in err
+        assert (repo / "calc.py").read_text() == CALC_BUG
+        assert cli.main(["--config", cfg, "status", run_id, "--json"]) == cli.EXIT_OK
+        assert json.loads(capsys.readouterr().out)[0]["status"] == "interrupted"
+
+    def test_resume_finishes_the_run_and_streams_only_new_events(self, crashed, capsys):
+        cfg, repo, run_id = crashed
+        assert cli.main(["--config", cfg, "resume", run_id, "--json"]) == cli.EXIT_OK
+        out = lines(capsys)
+        assert out[0]["type"] == "resume_plan" and out[0]["CATEGORY"] == "SAFE_RESUME"
+        assert out[-1]["type"] == "summary" and out[-1]["outcome"] == "applied"
+        streamed = [e for e in out if "id" in e]
+        assert streamed and "phase_started" in {e["type"] for e in streamed}
+        assert not any(e["type"] == "run_interrupted" for e in streamed)  # history is not replayed
+        assert (repo / "calc.py").read_text().endswith("a + b\n")
+
+    def test_drift_stops_with_a_distinct_exit_code_until_accepted(self, crashed, capsys):
+        cfg, repo, run_id = crashed
+        (repo / "calc.py").write_text("def add(a, b):\n    return b + a  # mine\n")
+        assert cli.main(["--config", cfg, "resume", run_id]) == cli.EXIT_NEEDS_CONFIRMATION
+        assert "--accept-drift" in capsys.readouterr().err
+        assert "mine" in (repo / "calc.py").read_text()
+        assert cli.main(["--config", cfg, "resume", run_id, "--accept-drift", "--json"]) == cli.EXIT_REJECTED
+        assert "mine" in (repo / "calc.py").read_text()  # promotion refused to overwrite the human's file
+
+    def test_finished_and_unknown_runs(self, env, crashed, capsys):
+        cfg, _, run_id = crashed
+        assert cli.main(["--config", cfg, "resume", run_id, "--json"]) == cli.EXIT_OK
+        capsys.readouterr()
+        assert cli.main(["--config", cfg, "resume", run_id]) == cli.EXIT_FAILED  # already completed
+        assert cli.main(["--config", cfg, "resume", "no-such-run"]) == cli.EXIT_USAGE
+
+    def test_checkpoints_and_events_are_inspectable(self, crashed, capsys):
+        cfg, _, run_id = crashed
+        assert cli.main(["--config", cfg, "checkpoints", run_id, "--json"]) == cli.EXIT_OK
+        rows = json.loads(capsys.readouterr().out)
+        assert [r["phase"] for r in rows][-1] == "patching" and {r["status"] for r in rows} == {"ok"}
+        assert cli.main(["--config", cfg, "events", run_id, "--json"]) == cli.EXIT_OK
+        events = lines(capsys)
+        assert events[0]["type"] == "run_state_changed" and all(e["event_uid"] for e in events)
+        cutoff = events[3]["id"]
+        assert cli.main(["--config", cfg, "events", run_id, "--after", str(cutoff), "--json"]) == cli.EXIT_OK
+        assert [e["id"] for e in lines(capsys)] == [e["id"] for e in events if e["id"] > cutoff]

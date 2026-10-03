@@ -8,15 +8,17 @@ from typing import Any
 from patchquest.database import get_db, now_iso
 
 
-def insert_run(run_id: str, task: str = "task", repo_path: str | None = None, status: str = "created") -> None:
+def insert_run(run_id: str, task: str = "task", repo_path: str | None = None, status: str = "created",
+               provider: str = "mock", model: str | None = None) -> None:
     """Insert a stub run so foreign keys and lookups work. Idempotent."""
     from tests.support.repos import TEST_REPO
 
     now = now_iso()
     with get_db() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO runs (id, repo_path, task, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (run_id, repo_path or TEST_REPO, task, status, now, now),
+            "INSERT OR IGNORE INTO runs (id, repo_path, task, status, provider, model, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, repo_path or TEST_REPO, task, status, provider, model, now, now),
         )
 
 

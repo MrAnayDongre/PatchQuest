@@ -14,8 +14,19 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from patchquest.database import get_db, insert_event, now_iso
+from patchquest.domain.runs import RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
+from patchquest.persistence.runs import transition
+from patchquest.runtime.resume import (
+    ConfirmationRequired,
+    NotResumable,
+    PromotionState,
+    RecoveryCategory,
+    ResumePlan,
+    plan_resume,
+    revert_partial_promotion,
+)
 from patchquest.security import validate_base_url, validate_repo_path
 
 TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_interrupted"})
@@ -89,6 +100,60 @@ class TaskService:
             self._tasks.pop(run_id, None)
 
         task.add_done_callback(_cleanup)
+
+    def resume(self, run_id: str, *, accept_drift: bool = False, rollback: bool = False) -> ResumePlan:
+        """Continue an interrupted run after the safety checks in ``plan_resume``.
+
+        Raises ``NotResumable`` when it cannot, ``ConfirmationRequired`` when it can but a human must first
+        accept ``accept_drift`` (changes made while the run was down) or ``rollback`` (undo a half-written
+        promotion). Returns the plan that was acted on.
+        """
+        from patchquest.persistence import checkpoints
+
+        if run_id in self._machines:
+            raise NotResumable(plan_resume(run_id))
+        plan = plan_resume(run_id)
+        if plan.category is RecoveryCategory.NON_RECOVERABLE:
+            raise NotResumable(plan)
+        if plan.category is RecoveryCategory.HUMAN_CONFIRMATION_REQUIRED and not accept_drift:
+            raise ConfirmationRequired(plan)
+        if plan.category is RecoveryCategory.ROLLBACK_REQUIRED:
+            if not rollback:
+                raise ConfirmationRequired(plan)
+            revert_partial_promotion(run_id, plan)
+
+        run = self.get_run(run_id)
+        machine = self._machine_for(run)
+        machine.attempt = int(run.get("attempt") or 1) + 1
+        reconciled = plan.promotion is PromotionState.APPLIED
+        with get_db() as conn:
+            conn.execute("UPDATE runs SET attempt = ? WHERE id = ?", (machine.attempt, run_id))
+            cp, _ = checkpoints.latest_valid(conn, run_id)
+            insert_event(conn, run_id, "run_resume_requested", message=plan.recovery_action,
+                         payload=plan.explain(), actor="user", attempt=machine.attempt)
+            # Leave "interrupted" before returning: anything following the run (CLI, SSE) treats that
+            # status as the end of the stream.
+            transition(conn, run_id, RunStatus.RUNNING, actor="resume", attempt=machine.attempt,
+                       correlation_id=machine.correlation_id,
+                       reason=f"resumed from checkpoint {cp.seq}" if cp else "restarted from the beginning")
+        self._machines[run_id] = machine
+
+        async def _go() -> None:
+            if cp is not None:
+                await machine.restore_checkpoint(cp)
+                if reconciled:  # after restore: a checkpoint carries the flag's older value
+                    machine._promotion_reconciled = "applied"
+            await machine.execute(resumed=True)
+
+        task = asyncio.get_running_loop().create_task(_go())
+        self._tasks[run_id] = task
+
+        def _cleanup(_t: asyncio.Task) -> None:
+            self._machines.pop(run_id, None)
+            self._tasks.pop(run_id, None)
+
+        task.add_done_callback(_cleanup)
+        return plan
 
     async def run_to_completion(self, run_id: str) -> dict[str, Any]:
         self.launch(run_id)

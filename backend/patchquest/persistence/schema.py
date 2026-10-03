@@ -44,7 +44,31 @@ def _ledger(conn: sqlite3.Connection) -> None:
     run_script(conn, _LEDGER_TRIGGERS)
 
 
+_CHECKPOINTS = """
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    seq INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL,
+    runtime_version TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    event_cursor INTEGER NOT NULL,
+    attempt INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    fingerprint_json TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (run_id, seq)
+);
+"""
+
+
+def _checkpoints(conn: sqlite3.Connection) -> None:
+    run_script(conn, _CHECKPOINTS)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
+    Migration(3, "checkpoints", _checkpoints),
 ]

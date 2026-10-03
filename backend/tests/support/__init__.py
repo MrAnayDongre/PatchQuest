@@ -8,7 +8,15 @@
 
 from tests.support.db import event_types, fetch_events, insert_run, run_row
 from tests.support.engine import OK_BODY, completion, fake_server
-from tests.support.pipeline import run_scripted
+from tests.support.pipeline import (
+    SimulatedCrash,
+    after_event,
+    crash_run,
+    crash_when,
+    prepare_run,
+    resume_run,
+    run_scripted,
+)
 from tests.support.repos import (
     CALC_BUG,
     CALC_TEST,
@@ -23,7 +31,28 @@ from tests.support.repos import (
 )
 
 __all__ = [
-    "CALC_BUG", "CALC_TEST", "FIX", "OK_BODY", "PLAN", "TASK", "TEST_CMD", "TEST_REPO", "WRONG",
-    "completion", "edit", "event_types", "fake_server", "fetch_events", "insert_run", "make_calc_repo",
-    "run_row", "run_scripted",
+    "CALC_BUG",
+    "CALC_TEST",
+    "FIX",
+    "OK_BODY",
+    "PLAN",
+    "TASK",
+    "TEST_CMD",
+    "TEST_REPO",
+    "WRONG",
+    "SimulatedCrash",
+    "after_event",
+    "completion",
+    "crash_run",
+    "crash_when",
+    "edit",
+    "event_types",
+    "fake_server",
+    "fetch_events",
+    "insert_run",
+    "make_calc_repo",
+    "prepare_run",
+    "resume_run",
+    "run_row",
+    "run_scripted",
 ]

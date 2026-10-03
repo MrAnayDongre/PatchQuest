@@ -18,13 +18,15 @@ import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from patchquest import __version__
 from patchquest.config import get_config
 from patchquest.database import get_db, now_iso
 from patchquest.domain.runs import IllegalTransition, RunStatus
+from patchquest.orchestrator import snapshot
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.phases import PHASE_ORDER, Phase, PhaseStatus
 from patchquest.orchestrator.run_context import RunContext
-from patchquest.persistence import ledger
+from patchquest.persistence import checkpoints, ledger
 from patchquest.persistence.runs import transition
 from patchquest.tools.secret_guard import redact_secrets
 
@@ -146,6 +148,7 @@ class RunStateMachine:
         self._blocked = False
         self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
+        self._promotion_reconciled: str | None = None  # "applied": resume found promotion had already landed
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
         self.attempt = 1  # incremented by resume; every event carries it
@@ -181,15 +184,19 @@ class RunStateMachine:
             logger.info("status change skipped: %s", exc)
             return False
 
-    async def execute(self) -> None:
-        self._move(RunStatus.RUNNING, "execution started")
+    async def execute(self, resumed: bool = False) -> None:
+        if not resumed:  # a resumed run was already moved to RUNNING by TaskService.resume
+            self._move(RunStatus.RUNNING, "execution started")
         try:
             for phase in PHASE_ORDER:
+                if self.phase_statuses[phase] is not PhaseStatus.PENDING:
+                    continue  # settled before the checkpoint this run was resumed from
                 if self._cancelled.is_set():
                     await self._fail_run("Run cancelled", status="cancelled")
                     return
                 if self._blocked and phase not in _PHASES_AFTER_BLOCK:
                     await self._skip(phase, "Skipped: an earlier phase is blocked")
+                    await self._checkpoint(phase)
                     continue
                 await self._run_phase(phase)
                 if self.phase_statuses[phase] == PhaseStatus.FAILED:
@@ -197,6 +204,7 @@ class RunStateMachine:
                     return
                 if self.phase_statuses[phase] == PhaseStatus.BLOCKED:
                     self._blocked = True
+                await self._checkpoint(phase)
 
             await self._complete_run()
         except Exception as e:
@@ -205,6 +213,39 @@ class RunStateMachine:
         finally:
             if self._workspace is not None:
                 await asyncio.to_thread(self._workspace.cleanup)
+
+    # -------------------------------------------------------------- checkpoints
+    async def _checkpoint(self, phase: Phase) -> None:
+        """Persist everything needed to continue after ``phase``. A failure here is recorded, never fatal:
+        the run keeps going, it is just resumable only from an earlier checkpoint."""
+        from patchquest.runtime import fingerprint
+
+        try:
+            state = await asyncio.to_thread(snapshot.capture, self)
+            ws = self._workspace
+            watch = {*self.ctx.selected_context, *self.ctx.selected_files, *(ws.touched if ws else ())}
+            fp = await asyncio.to_thread(fingerprint.compute, self.ctx.repo_path, watch)
+            with get_db() as conn:
+                cursor = conn.execute("SELECT COALESCE(MAX(id), 0) FROM run_events WHERE run_id = ?",
+                                      (self.run_id,)).fetchone()[0]
+                cp = checkpoints.save(conn, run_id=self.run_id, phase=phase.value, state=state,
+                                      fingerprint=fp.to_dict(), event_cursor=cursor, attempt=self.attempt,
+                                      runtime_version=__version__)
+        except Exception as exc:
+            logger.warning("checkpoint after %s failed for run %s", phase.value, self.run_id, exc_info=True)
+            await self._emit("checkpoint_failed", phase=phase.value,
+                             message=f"Could not save a checkpoint after {phase.value}: {exc}")
+            return
+        await self._emit("checkpoint_created", phase=phase.value, message=f"Checkpoint {cp.seq} saved after {phase.value}",
+                         payload={"seq": cp.seq, "event_cursor": cp.event_cursor})
+
+    async def restore_checkpoint(self, cp: checkpoints.Checkpoint) -> None:
+        """Load a checkpoint into this (fresh) machine and rebuild the shadow workspace it described."""
+        files = snapshot.restore(self, cp.state)
+        if files is not None:
+            ws = await self._ws()
+            await asyncio.to_thread(ws.adopt, {r: v["base"] for r, v in files.items()},
+                                    {r: v["current"] for r, v in files.items()})
 
     async def _skip(self, phase: Phase, message: str) -> None:
         self.phase_statuses[phase] = PhaseStatus.SKIPPED
@@ -307,6 +348,7 @@ class RunStateMachine:
                 result = {"success": False, "returncode": -3, "stdout": "", "stderr": "Command was not approved",
                           "denied": True}
             else:
+                await self._emit("command_started", message=safe_cmd, payload={"command": safe_cmd})
                 result = await asyncio.to_thread(self._run_in_runtime, command, str(ws.path), True)
                 await self._emit("command_executed", message=f"{safe_cmd} -> exit {result.get('returncode')}", payload={
                     "command": safe_cmd, "returncode": result.get("returncode"), "risk": decision.level.value,
@@ -644,14 +686,26 @@ class RunStateMachine:
                 await self._emit("patch_rejected", phase="final_report", message=f"Patch not applied ({why})")
                 return
 
+        if self._promotion_reconciled == "applied":  # a previous attempt wrote the files, then died
+            ctx.outcome = "applied"
+            ctx.applied_files = [s["path"] for s in ws.summary()] or list(ctx.applied_files)
+            await self._emit("promotion_reconciled", phase="final_report",
+                             message="The patch had already been applied before the interruption")
+            return
+        manifest = await asyncio.to_thread(ws.promotion_manifest)
+        # Journal intent *before* touching the real repository: a crash between here and the
+        # completion event is then recognisable, and resume can verify what actually landed.
+        await self._emit("promotion_started", phase="final_report", payload={"files": manifest})
         result = await asyncio.to_thread(ws.promote)
         if not result.success:
+            await self._emit("promotion_failed", phase="final_report", message=str(result.error))
             ctx.outcome = "conflict"
             ctx.errors.append(f"promote: {result.error}")
             await self._emit("patch_rejected", phase="final_report", message=f"Could not apply to repository: {result.error}")
             return
         ctx.outcome = "applied"
         ctx.applied_files = result.files_changed
+        await self._emit("promotion_completed", phase="final_report", payload={"files": list(manifest)})
         await self._emit("patch_applied", phase="final_report",
                          message=f"Patch applied to {len(ctx.applied_files)} files",
                          payload={"files": result.files_changed})

@@ -132,6 +132,22 @@ class ShadowWorkspace:
         return out
 
     # --- promotion -------------------------------------------------------
+    def promotion_manifest(self) -> dict[str, dict[str, str | None]]:
+        """What promotion will write: per changed file, the sha256 expected now (``base``) and the one
+        it will have afterwards (``new``). Journaled before promotion so a crash can be reconciled."""
+        manifest: dict[str, dict[str, str | None]] = {}
+        for rel in self.touched:
+            new = self._read(rel)
+            if new != self.base[rel]:
+                manifest[rel] = {"base": None if self.base[rel] is None else sha256_bytes(self.base[rel]),
+                                 "new": None if new is None else sha256_bytes(new)}
+        return manifest
+
+    def adopt(self, base: dict[str, bytes | None], current: dict[str, bytes | None]) -> None:
+        """Rebuild a workspace's tracked state from a checkpoint: originals plus current contents."""
+        self.base = dict(base)
+        self.restore(current)
+
     def promote(self) -> PatchResult:
         """Write every touched file's workspace state into the real repo, atomically."""
         changes: list[Change] = []

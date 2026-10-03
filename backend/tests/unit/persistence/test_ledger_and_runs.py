@@ -18,7 +18,10 @@ from patchquest.domain.runs import (
 from patchquest.persistence import ledger
 from patchquest.persistence.migrations import Migration, SchemaTooNew, migrate, statements
 from patchquest.persistence.runs import transition
+from patchquest.persistence.schema import MIGRATIONS
 from tests.support.db import insert_run
+
+LATEST = max(m.version for m in MIGRATIONS)
 
 
 class TestTransitionTable:
@@ -190,7 +193,7 @@ class TestMigrations:
         set_db_path(path)
         init_db()
         with get_db() as conn:
-            assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 2
+            assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == LATEST
             old = ledger.read(conn, "old")[0]
             assert old["type"] == "run_created" and old["event_uid"] is None and old["schema_version"] == 1
             with pytest.raises(sqlite3.DatabaseError):
@@ -205,7 +208,7 @@ class TestMigrations:
         init_db()
         init_db()
         with get_db() as conn:
-            assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+            assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == LATEST
 
     def test_fresh_database_has_no_backup(self):
         assert not list(get_db_path().parent.glob("*.bak"))
@@ -236,3 +239,24 @@ class TestMigrations:
     def test_statement_splitter_keeps_trigger_bodies_whole(self):
         script = "CREATE TABLE t (x);\nCREATE TRIGGER g BEFORE DELETE ON t\nBEGIN SELECT 1; SELECT 2; END;\nSELECT 3;"
         assert len(list(statements(script))) == 3
+
+
+def test_default_state_directory_is_private_and_a_custom_one_is_left_alone(tmp_path, monkeypatch):
+    import stat
+
+    from patchquest import database
+
+    home = tmp_path / "home"
+    (home / ".patchquest").mkdir(parents=True)
+    monkeypatch.setattr("pathlib.Path.home", lambda: home)
+    default_db = home / ".patchquest" / "patchquest.db"
+    default_db.write_bytes(b"")
+    database._make_private(default_db)
+    assert stat.S_IMODE((home / ".patchquest").stat().st_mode) == 0o700
+    assert stat.S_IMODE(default_db.stat().st_mode) == 0o600
+
+    custom = tmp_path / "shared"
+    custom.mkdir()
+    custom.chmod(0o755)
+    database._make_private(custom / "x.db")
+    assert stat.S_IMODE(custom.stat().st_mode) == 0o755  # not ours to change
