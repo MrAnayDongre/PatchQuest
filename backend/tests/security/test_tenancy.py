@@ -227,3 +227,13 @@ def test_cli_sets_up_ownership_and_refuses_double_claims(world, tmp_path, capsys
     code, out, _ = run("projects", "add", "core", "--team", team, "--workspace", world.ws["a"], "--json")
     assert code == 0 and run("projects", "list", "--workspace", world.ws["a"])[1].count("core") == 1
     assert run("repos", "list", "--workspace", "ws_nope")[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_me_lists_only_the_callers_workspaces_and_their_permissions(world):
+    async with world.client("dev_a") as c:
+        body = (await c.get("/api/me")).json()
+    assert [w["id"] for w in body["workspaces"]] == [world.ws["a"]] and body["workspaces"][0]["role"] == "DEVELOPER"
+    assert "run.create" in body["workspaces"][0]["permissions"] and "connector.manage" not in body["workspaces"][0]["permissions"]
+    async with world.client() as c:
+        assert (await c.get("/api/me")).status_code == 401

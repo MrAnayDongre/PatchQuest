@@ -231,3 +231,15 @@ async def revoke_role(request: Request, principal: CurrentPrincipal, team_id: st
         removed = tenancy.revoke_team_role(conn, team_id, workspace_id)
     record(request, principal, "team.revoke_role", workspace_id, team_id)
     return {"revoked": removed}
+
+
+@router.get("/me")
+async def me(principal: CurrentPrincipal) -> dict[str, Any]:
+    """Who the caller is and which workspaces they can use, so a client knows what to pass as ``workspace_id``."""
+    from patchquest.domain.identity import ROLE_PERMISSIONS
+
+    with get_db() as conn:
+        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM workspaces")}
+    return {"id": principal.id, "kind": principal.kind, "name": principal.name, "org_id": principal.org_id,
+            "workspaces": [{"id": ws, "name": names.get(ws, ws), "role": role.value,
+                            "permissions": sorted(p.value for p in ROLE_PERMISSIONS[role])} for ws, role in sorted(principal.roles.items())]}
