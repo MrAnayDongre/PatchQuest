@@ -33,6 +33,9 @@ class TaskResult:
     lines_removed: int = 0
     error: str | None = None
     run_id: str | None = None
+    failure_kind: str | None = None  # the run's typed failure (domain.failures), if it failed
+    oracle_returncode: int | None = None
+    attribution: str | None = None  # who to blame: see ``attribute``
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +69,47 @@ def classify(r: TaskResult) -> tuple[str, str | None]:
     return "success", None
 
 
+# Who a failed task is attributed to. The point is that a harness bug must never be blamed on the model, and a weak
+# model must never be blamed on the harness.
+ATTRIBUTIONS = ("HARNESS_FAILURE", "MODEL_FAILURE", "PROVIDER_FAILURE", "TOOL_FAILURE", "SANDBOX_FAILURE",
+                "ENVIRONMENT_FAILURE", "ORACLE_FAILURE", "TIMEOUT", "BUDGET")
+_BY_KIND = {
+    "MODEL_TIMEOUT": "PROVIDER_FAILURE", "MODEL_RATE_LIMIT": "PROVIDER_FAILURE", "MODEL_UNAVAILABLE": "PROVIDER_FAILURE",
+    "MODEL_AUTH": "PROVIDER_FAILURE", "MODEL_CONTEXT_OVERFLOW": "MODEL_FAILURE", "MODEL_INVALID_OUTPUT": "MODEL_FAILURE",
+    "MODEL_CAPABILITY": "MODEL_FAILURE", "PATCH_PARSE": "MODEL_FAILURE", "PATCH_APPLY": "MODEL_FAILURE",
+    "PATCH_CONFLICT": "MODEL_FAILURE", "PATCH_VALIDATION": "MODEL_FAILURE", "TEST_FAILURE": "MODEL_FAILURE",
+    "BUDGET_EXHAUSTED": "BUDGET", "USER_CANCELLED": "TIMEOUT", "SANDBOX_FAILURE": "SANDBOX_FAILURE",
+    "ENVIRONMENT_FAILURE": "ENVIRONMENT_FAILURE", "TOOL_FAILURE": "TOOL_FAILURE", "TOOL_TIMEOUT": "TOOL_FAILURE",
+    "COMMAND_TIMEOUT": "TOOL_FAILURE", "COMMAND_FAILED": "TOOL_FAILURE", "COMMAND_DENIED": "TOOL_FAILURE",
+    "CONNECTOR_AUTH": "PROVIDER_FAILURE", "CONNECTOR_UNAVAILABLE": "PROVIDER_FAILURE", "CONNECTOR_RATE_LIMIT": "PROVIDER_FAILURE",
+    "DATABASE_FAILURE": "HARNESS_FAILURE", "CHECKPOINT_FAILURE": "HARNESS_FAILURE", "INTERNAL_INVARIANT": "HARNESS_FAILURE",
+    "PLUGIN_FAILURE": "HARNESS_FAILURE", "REPLAY_DIVERGED": "HARNESS_FAILURE", "REPOSITORY_DRIFT": "ENVIRONMENT_FAILURE",
+}
+# Oracle exit codes that mean "the oracle itself could not run" rather than "the hidden tests failed".
+_ORACLE_BROKEN = {127, 126, -1, -9, -15}
+
+
+def attribute(r: TaskResult, *, scripted: bool) -> str | None:
+    """Attribute a task that did not succeed. ``scripted`` runs have no model: any failure there is the harness's."""
+    if r.status == "success":
+        return None
+    if r.oracle_returncode in _ORACLE_BROKEN:
+        return "ORACLE_FAILURE"
+    if scripted:
+        return "HARNESS_FAILURE"  # the reference solution is applied by the scripted provider; failing is a harness bug
+    if r.failure_kind in _BY_KIND:
+        return _BY_KIND[r.failure_kind]
+    if r.failure_reason in ("timeout",):
+        return "TIMEOUT"
+    if r.failure_reason == "budget_exceeded":
+        return "BUDGET"
+    if r.failure_reason in ("provider_error",):
+        return "PROVIDER_FAILURE"
+    if r.failure_reason in ("declined", "no_patch", "validation_failed", "rejected", "oracle_failed", "forbidden_change", "conflict"):
+        return "MODEL_FAILURE"
+    return "HARNESS_FAILURE"  # an outcome nobody planned for is treated as ours to explain
+
+
 def summarize(results: list[TaskResult]) -> dict[str, Any]:
     def block(rs: list[TaskResult]) -> dict[str, Any]:
         n = len(rs)
@@ -80,8 +124,13 @@ def summarize(results: list[TaskResult]) -> dict[str, Any]:
     for r in results:
         if r.failure_reason:
             reasons[r.failure_reason] = reasons.get(r.failure_reason, 0) + 1
+    attributions: dict[str, int] = {}
+    for r in results:
+        if r.attribution:
+            attributions[r.attribution] = attributions.get(r.attribution, 0) + 1
     calls = [r.model_calls for r in results]
     return {
+        "attribution": dict(sorted(attributions.items(), key=lambda kv: -kv[1])),
         "overall": block(results),
         "by_category": {c: block([r for r in results if r.category == c]) for c in cats},
         "failure_reasons": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),

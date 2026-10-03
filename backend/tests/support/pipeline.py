@@ -4,40 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 
 from patchquest.agents.providers_scripted import ScriptedProvider
-from patchquest.orchestrator.event_bus import event_bus
+from patchquest.evaluation.faults import SimulatedCrash, after_event, crash_when
 from patchquest.orchestrator.state_machine import RunStateMachine
 from tests.support.db import insert_run
 from tests.support.repos import TASK
-
-
-class SimulatedCrash(BaseException):
-    """Stands in for the process dying: not an ``Exception``, so no handler in the runtime swallows it."""
-
-
-@contextmanager
-def crash_when(predicate: Callable[[dict], bool]) -> Iterator[None]:
-    """Kill the run right after the first event matching ``predicate`` has been committed."""
-    real = event_bus.emit
-
-    async def emit(run_id: str, event: dict) -> None:
-        await real(run_id, event)
-        if predicate(event):
-            raise SimulatedCrash(event["type"])
-
-    event_bus.emit = emit  # type: ignore[method-assign]
-    try:
-        yield
-    finally:
-        del event_bus.emit  # drops the instance override, restoring the class method
-
-
-def after_event(event_type: str, **match: object) -> Callable[[dict], bool]:
-    return lambda e: e["type"] == event_type and all(e.get(k) == v for k, v in match.items())
 
 
 def prepare_run(repo: Path, responses: dict, *, task: str = TASK, runtime_mode: str = "local") -> tuple[RunStateMachine, str]:
@@ -46,6 +20,9 @@ def prepare_run(repo: Path, responses: dict, *, task: str = TASK, runtime_mode: 
     ScriptedProvider.register(name, responses)
     insert_run(run_id, task, str(repo), provider="scripted", model=name)
     return RunStateMachine(run_id, str(repo), task, provider="scripted", model=name, runtime_mode=runtime_mode), run_id
+
+
+__all__ = ["SimulatedCrash", "after_event", "crash_run", "crash_when", "prepare_run", "resume_run", "run_scripted"]
 
 
 async def crash_run(repo: Path, responses: dict, predicate: Callable[[dict], bool], *, task: str = TASK) -> str:

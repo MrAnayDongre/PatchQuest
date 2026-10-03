@@ -803,6 +803,9 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             print(f"fixes:       {', '.join(diff['fixes']) or 'none'}")
         return EXIT_FAILED if diff["regressions"] else EXIT_OK
 
+    if args.eval_cmd in ("recovery", "matrix", "experiment", "gate"):
+        return _eval_extended(args)
+
     def progress(r) -> None:
         if not args.json:
             print(f"{ICON['ok'] if r.status == 'success' else ICON['warn'] if r.status == 'partial' else ICON['fail']} "
@@ -830,6 +833,68 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         if args.out:
             print(f"results written to {args.out}")
     return EXIT_FAILED if overall["success_rate"] < args.fail_under else EXIT_OK
+
+
+def _eval_extended(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from patchquest.evaluation import experiments, gates, recovery
+
+    def emit(data: dict[str, Any]) -> None:
+        if args.out:
+            Path(args.out).write_text(json.dumps(data, indent=2, default=str))
+        if args.json:
+            _emit_json(data)
+
+    try:
+        if args.eval_cmd == "recovery":
+            data = asyncio.run(recovery.run_recovery(only=args.filter))
+            emit(data)
+            if not args.json:
+                for sc in data["scenarios"]:
+                    print(f"{ICON['ok'] if sc['passed'] else ICON['fail']} {sc['id']:32s} {sc['category'] or '-':28s} "
+                          f"{sc['status']}/{sc['outcome']} calls={sc['model_calls']}")
+                    for failure in sc["failures"]:
+                        print(f"    - {failure}", file=sys.stderr)
+                s = data["summary"]
+                print(f"\n{s['passed']}/{s['scenarios']} scenarios ended correct and safe")
+            return EXIT_OK if data["summary"]["passed"] == data["summary"]["scenarios"] else EXIT_FAILED
+        if args.eval_cmd == "matrix":
+            targets = [experiments.parse_target(t) for t in args.target]
+            data = asyncio.run(experiments.run_matrix(targets, corpus=args.corpus, only=args.filter, time_limit=args.timeout))
+            emit(data)
+            if not args.json:
+                print(f"{'target':36s} {'success':>9s} {'tokens':>9s} {'calls':>6s} {'wall s':>8s}  attribution")
+                for row in data["table"]:
+                    print(f"{row['target']:36s} {row['success']:>4d}/{row['tasks']:<4d} {row['tokens']:>9d} {row['model_calls']:>6d} "
+                          f"{row['wall_s']:>8.1f}  {row['attribution']}")
+            return EXIT_OK
+        if args.eval_cmd == "experiment":
+            data = asyncio.run(experiments.run_experiment(
+                baseline=_parse_overrides(args.baseline or []), candidate=_parse_overrides(args.candidate or []),
+                target=experiments.Target(args.provider, args.model, args.base_url), corpus=args.corpus, only=args.filter,
+                time_limit=args.timeout))
+            emit(data)
+            if not args.json:
+                p = data["paired"]
+                print(f"baseline  {data['baseline']['success']}/{data['tasks']}   candidate  {data['candidate']['success']}/{data['tasks']}")
+                print(f"candidate wins {p['candidate_wins']}  losses {p['candidate_losses']}  ties {p['ties']}  sign-test p={p['sign_test_p']}")
+                print(data["reading"])
+            return EXIT_OK
+        data = asyncio.run(gates.run_gate(
+            args.tier, provider=args.provider, model=args.model, base_url=args.base_url, baseline=args.baseline,
+            fail_under=args.fail_under, time_limit=args.timeout,
+            progress=None if args.json else lambda r: print(
+                f"{ICON['info'] if r.skipped else ICON['ok'] if r.passed else ICON['fail']} tier {r.tier} ({r.name}): "
+                f"{'skipped' if r.skipped else 'passed' if r.passed else 'FAILED'}", file=sys.stderr)))
+        emit(data)
+        for tier in data["tiers"]:
+            for problem in tier["problems"]:
+                print(f"    - {problem}", file=sys.stderr)
+        return EXIT_OK if data["passed"] else EXIT_FAILED
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -1019,6 +1084,38 @@ def build_parser() -> argparse.ArgumentParser:
     er.add_argument("--timeout", type=float, default=300, help="seconds per task")
     er.add_argument("--out", help="write the full JSON results here")
     er.add_argument("--fail-under", type=float, default=0.0, help="exit 1 if the success rate is lower")
+    er2 = esub.add_parser("recovery", help="crash/resume/drift/corruption/cancel scenarios (no model needed)")
+    er2.add_argument("--filter")
+    er2.add_argument("--out")
+    er2.add_argument("--json", action="store_true")
+    em = esub.add_parser("matrix", help="the corpus against several provider:model targets")
+    em.add_argument("--target", action="append", required=True, metavar="PROVIDER[:MODEL][@BASE_URL]")
+    em.add_argument("--corpus")
+    em.add_argument("--filter")
+    em.add_argument("--timeout", type=float, default=300)
+    em.add_argument("--out")
+    em.add_argument("--json", action="store_true")
+    ex = esub.add_parser("experiment", help="same model and tasks, baseline versus candidate agent.* settings, paired")
+    ex.add_argument("--provider", default="scripted")
+    ex.add_argument("--model")
+    ex.add_argument("--base-url")
+    ex.add_argument("--baseline", action="append", metavar="agent.KEY=VALUE")
+    ex.add_argument("--candidate", action="append", metavar="agent.KEY=VALUE")
+    ex.add_argument("--corpus")
+    ex.add_argument("--filter")
+    ex.add_argument("--timeout", type=float, default=300)
+    ex.add_argument("--out")
+    ex.add_argument("--json", action="store_true")
+    eg = esub.add_parser("gate", help="regression gates: 0 harness, 1 recovery, 2 replay, 3 live smoke, 4 live corpus")
+    eg.add_argument("--tier", type=int, choices=range(5), required=True)
+    eg.add_argument("--provider")
+    eg.add_argument("--model")
+    eg.add_argument("--base-url")
+    eg.add_argument("--baseline", help="result file from an earlier live run (tier 4)")
+    eg.add_argument("--fail-under", type=float, default=0.0)
+    eg.add_argument("--timeout", type=float, default=300)
+    eg.add_argument("--out")
+    eg.add_argument("--json", action="store_true")
     ec.add_argument("base")
     ec.add_argument("new")
     ec.add_argument("--json", action="store_true")
