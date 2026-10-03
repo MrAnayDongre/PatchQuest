@@ -366,6 +366,7 @@ class TestSafety:
     @pytest.mark.asyncio
     async def test_missing_and_unknown_variables_are_refused(self, engine, repo):
         raw = flow(repo)
+        raw["trigger"] = {"type": "manual"}  # only a manual start can be asked for values
         raw["variables"]["ticket"] = {"required": True}
         wf_id = save(engine, raw)
         with pytest.raises(WorkflowError, match="missing variable"):
@@ -570,3 +571,23 @@ class TestHistory:
         assert types.index("approval_requested") < types.index("approval_decided") < types.index("workflow_completed")
         with pytest.raises(sqlite3.DatabaseError, match="append-only"), get_db() as conn:
             conn.execute("DELETE FROM workflow_events")
+
+
+class TestDeliveryResilience:
+    @pytest.mark.asyncio
+    async def test_a_workflow_that_cannot_start_does_not_stop_the_event_reaching_others(self, engine, repo):
+        script_agent()
+        broken = flow(repo)
+        broken["name"] = "broken"
+        broken["variables"]["ticket"] = {"required": True}  # a manual-only shape, forced past validation below
+        with get_db() as conn:
+            store.save_version(conn, WS, parse(broken), "attacker")
+        save(engine, flow(repo))
+        ev = TriggerEvent("github", "github.issues.labeled", "d9", WS, {"label": "agent-ready", "title": "t"})
+        started = await engine.deliver_event(ev)
+        assert len(started) == 1  # the healthy workflow still started
+        from patchquest.persistence import identity as ids
+
+        with get_db() as conn:
+            refused = [e for e in ids.read_audit(conn, [WS]) if e["action"] == "workflow.start_failed"]
+        assert refused and "no longer passes validation" in refused[0]["detail"]["reason"]

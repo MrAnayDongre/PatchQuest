@@ -27,6 +27,7 @@ class Permission(StrEnum):
     RUN_READ = "run.read"
     RUN_CREATE = "run.create"
     RUN_CONTROL = "run.control"  # cancel, resume, fork, replay
+    WORKFLOW_MANAGE = "workflow.manage"  # create and edit workflow definitions
     APPROVAL_DECIDE = "approval.decide"
     SETTINGS_READ = "settings.read"
     SETTINGS_WRITE = "settings.write"
@@ -40,7 +41,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.OWNER: _ALL,
     Role.ADMIN: _ALL,  # differs from OWNER only in who may grant OWNER (see ``may_grant``)
     Role.DEVELOPER: frozenset({Permission.RUN_READ, Permission.RUN_CREATE, Permission.RUN_CONTROL,
-                               Permission.APPROVAL_DECIDE, Permission.SETTINGS_READ}),
+                               Permission.APPROVAL_DECIDE, Permission.SETTINGS_READ, Permission.WORKFLOW_MANAGE}),
     Role.OPERATOR: frozenset({Permission.RUN_READ, Permission.RUN_CONTROL, Permission.APPROVAL_DECIDE,
                               Permission.SETTINGS_READ, Permission.AUDIT_READ}),
     Role.VIEWER: frozenset({Permission.RUN_READ, Permission.SETTINGS_READ}),

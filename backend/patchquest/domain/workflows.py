@@ -368,6 +368,9 @@ def validate(wf: Workflow, policy: ValidationPolicy | None = None) -> list[Probl
         problems += _check_node(wf, n, policy, upstream_ok[n.id])
     problems += _check_approval_gates(wf, policy)
     for name, spec in wf.variables.items():
+        if wf.trigger.type != "manual" and spec.get("required") and "default" not in spec:
+            problems.append(Problem("unbound_variable", f"variable '{name}' is required but an event cannot supply it; "
+                                    "give it a default (only manually started workflows may require values at start)"))
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             problems.append(Problem("variable_name", f"variable name '{name}' is not a plain identifier"))
         if "default" in spec and has_secrets(str(spec["default"])):

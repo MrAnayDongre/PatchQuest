@@ -45,6 +45,7 @@ from patchquest.domain.workflows import (
     render,
     validate,
 )
+from patchquest.persistence import identity as ids
 from patchquest.persistence.ledger import now_iso
 from patchquest.runtime.retry import run_with_retry
 from patchquest.workflows import store
@@ -175,7 +176,13 @@ class WorkflowEngine:
                 wf, _ = store.load(conn, workflow_id)
             if not matches(wf.trigger.filter, data):
                 continue
-            run_id = self.start(workflow_id, data, trigger_key=f"{ev.source}:{ev.external_id}", created_by=f"event:{ev.source}")
+            try:
+                run_id = self.start(workflow_id, data, trigger_key=f"{ev.source}:{ev.external_id}", created_by=f"event:{ev.source}")
+            except WorkflowError as exc:  # one broken workflow must not stop the event reaching the others
+                with get_db() as conn:
+                    ids.audit(conn, "workflow.start_failed", actor=f"event:{ev.source}", outcome="refused", workspace_id=ev.workspace_id,
+                              target=workflow_id, detail={"event": ev.type, "reason": str(exc)[:500]})
+                continue
             if run_id:
                 touched.append(run_id)
         for run_id in dict.fromkeys(touched):
