@@ -132,3 +132,14 @@ def test_reset_only_touches_marked_demo_directories(tmp_path, monkeypatch):
         demo.reset(tmp_path)
     with pytest.raises(RuntimeError, match="not a demo directory"):
         demo.reset(tmp_path / ".patchquest")
+
+
+def test_the_kill_the_worker_demo_recovers_with_one_write_and_a_real_sigkill(tmp_path, monkeypatch, capsys):
+    """Runs in a subprocess: the demo switches the process-wide database and configuration."""
+    import subprocess
+    import sys
+
+    out = subprocess.run([sys.executable, "-m", "patchquest.cli", "demo", "crash"], capture_output=True, text=True, timeout=180,
+                         env={**os.environ, "HOME": str(tmp_path)})
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "killing it with SIGKILL" in out.stdout and "run_interrupted" in out.stdout and "patch applied 1 time(s); repository fixed: True" in out.stdout

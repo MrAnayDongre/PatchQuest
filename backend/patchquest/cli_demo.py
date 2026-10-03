@@ -12,7 +12,7 @@ from typing import Any
 
 def register(sub: Any) -> None:
     d = sub.add_parser("demo", help="start a seeded, isolated demo (never touches your real data); `demo reset` rebuilds it")
-    d.add_argument("action", nargs="?", choices=["start", "reset", "trigger", "transcript", "path"], default="start")
+    d.add_argument("action", nargs="?", choices=["start", "reset", "trigger", "transcript", "path", "crash"], default="start")
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--host", default="127.0.0.1")
     d.add_argument("--dir", help="demo directory (default ~/.patchquest/demo)")
@@ -33,6 +33,11 @@ def run(args: argparse.Namespace) -> int:
     if args.action == "path":
         print(directory)
         return 0
+    if args.action == "crash":
+        from patchquest.demo import crash
+
+        result = crash.run()
+        return 0 if result["status"] == "completed" and result["patch_applied_times"] == 1 and result["repository_fixed"] else 1
     if args.action == "reset":
         try:
             target = demo.reset(directory)
