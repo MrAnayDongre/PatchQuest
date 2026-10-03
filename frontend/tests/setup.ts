@@ -30,3 +30,6 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(globalThis, name, { value: new MemoryStorage(), configurable: true, writable: true })
   }
 }
+
+// jsdom does not implement scrolling; the app calls it on navigation.
+if (typeof window !== 'undefined') window.scrollTo = (() => {}) as typeof window.scrollTo

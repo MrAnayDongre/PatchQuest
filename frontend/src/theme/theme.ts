@@ -16,7 +16,7 @@ export function readStoredThemeMode(): ThemeMode {
   } catch {
     // ignore
   }
-  return 'dark'
+  return 'system'
 }
 
 export function applyTheme(mode: ThemeMode): 'dark' | 'light' {

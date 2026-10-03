@@ -1,0 +1,147 @@
+/* PatchQuest design tokens. Semantic names only; components never use raw colors. */
+:root,
+[data-theme='light'] {
+  --color-bg: #fafaf8;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f4f4f1;
+  --color-surface-3: #ebebe7;
+  --color-overlay: rgba(20, 22, 28, 0.42);
+
+  --color-text: #17181c;
+  --color-text-2: #4c4f58;
+  --color-text-3: #636771;
+  --color-text-inverse: #ffffff;
+
+  --color-border: #e5e5e0;
+  --color-border-strong: #c9c9c2;
+
+  --color-accent: #3b57d9;
+  --color-accent-hover: #2f46b8;
+  --color-accent-soft: #e9edfc;
+  --color-accent-text: #2f46b8;
+
+  --color-success: #17794a;
+  --color-success-soft: #e3f4ea;
+  --color-warning: #8f5200;
+  --color-warning-soft: #fcefd6;
+  --color-danger: #c0301d;
+  --color-danger-soft: #fce8e4;
+  --color-info: #1b64a8;
+  --color-info-soft: #e1eefa;
+
+  --color-diff-add-bg: #e6f6ec;
+  --color-diff-add-gutter: #cdebd9;
+  --color-diff-del-bg: #fdecea;
+  --color-diff-del-gutter: #f8d3cd;
+  --color-code-bg: #f6f6f3;
+
+  --shadow-1: 0 1px 2px rgba(20, 22, 28, 0.06);
+  --shadow-2: 0 4px 16px rgba(20, 22, 28, 0.08), 0 1px 3px rgba(20, 22, 28, 0.06);
+  --shadow-3: 0 16px 48px rgba(20, 22, 28, 0.16), 0 2px 8px rgba(20, 22, 28, 0.08);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+[data-theme='dark'] {
+  --color-bg: #0e0f12;
+  --color-surface-1: #15161a;
+  --color-surface-2: #1c1d22;
+  --color-surface-3: #26272d;
+  --color-overlay: rgba(0, 0, 0, 0.6);
+
+  --color-text: #ececee;
+  --color-text-2: #b0b2bb;
+  --color-text-3: #8f929c;
+  --color-text-inverse: #0e0f12;
+
+  --color-border: #2a2b32;
+  --color-border-strong: #41424b;
+
+  --color-accent: #8da2ff;
+  --color-accent-hover: #a9b9ff;
+  --color-accent-soft: #232842;
+  --color-accent-text: #a9b9ff;
+
+  --color-success: #52c88e;
+  --color-success-soft: #132a20;
+  --color-warning: #e8aa55;
+  --color-warning-soft: #302312;
+  --color-danger: #ff7f70;
+  --color-danger-soft: #331a17;
+  --color-info: #72b6f4;
+  --color-info-soft: #14263a;
+
+  --color-diff-add-bg: #12281d;
+  --color-diff-add-gutter: #1a3a29;
+  --color-diff-del-bg: #301a18;
+  --color-diff-del-gutter: #45231f;
+  --color-code-bg: #111216;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-3: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-code: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.625rem;
+  --text-3xl: 2.125rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+
+  --z-sticky: 20;
+  --z-nav: 30;
+  --z-overlay: 100;
+  --z-dialog: 110;
+  --z-toast: 130;
+  --z-tooltip: 140;
+
+  --sidebar-width: 232px;
+  --topbar-height: 52px;
+  --tap: 40px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --tap: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.01ms;
+    --dur: 0.01ms;
+    --dur-slow: 0.01ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

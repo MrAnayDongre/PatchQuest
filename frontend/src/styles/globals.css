@@ -1,42 +1,27 @@
-*, *::before, *::after {
+.legacy-root *,
+.legacy-root *::before,
+.legacy-root *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
-
-html, body {
-  height: 100%;
-  font-family: var(--font-body);
-  background: var(--bg-void);
-  color: var(--text-primary);
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-#root {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-button {
+.legacy-root button {
   cursor: pointer;
   font-family: inherit;
   border: none;
   background: none;
   color: inherit;
 }
-
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
+.legacy-root button:focus-visible,
+.legacy-root input:focus-visible,
+.legacy-root textarea:focus-visible,
+.legacy-root select:focus-visible {
   outline: 2px solid var(--accent-cyan);
   outline-offset: 2px;
 }
-
-input, textarea, select {
+.legacy-root input,
+.legacy-root textarea,
+.legacy-root select {
   font-family: var(--font-body);
   font-size: inherit;
   color: inherit;
@@ -45,24 +30,21 @@ input, textarea, select {
   padding: 0.55rem 0.65rem;
   border-radius: 4px;
 }
-
-input:focus, textarea:focus, select:focus {
+.legacy-root input:focus,
+.legacy-root textarea:focus,
+.legacy-root select:focus {
   border-color: rgba(94, 234, 212, 0.45);
   box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.12);
 }
-
-textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
-
-a {
+.legacy-root textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
+.legacy-root a {
   color: var(--accent-cyan);
   text-decoration: none;
 }
-
-a:hover { text-decoration: underline; }
-
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
+.legacy-root a:hover { text-decoration: underline; }
+.legacy-root ::-webkit-scrollbar { width: 8px; height: 8px; }
+.legacy-root ::-webkit-scrollbar-track { background: transparent; }
+.legacy-root ::-webkit-scrollbar-thumb {
   background: var(--border-glow);
   border-radius: 4px;
 }
