@@ -289,3 +289,61 @@ class TestAdminCommands:
         capsys.readouterr()
         cli.main(["--config", cfg, "admin", "token", "list", "--json"])
         assert next(t for t in json.loads(capsys.readouterr().out) if t["id"] == made["token_id"])["revoked_at"]
+
+
+class TestWorkflowCommands:
+    def definition(self, repo, tmp_path):
+        import yaml
+
+        raw = {"name": "cli-flow", "trigger": {"type": "manual"}, "variables": {"repo": {"default": str(repo)}}, "nodes": [
+            {"id": "fix", "type": "agent", "config": {"task": "Fix add() in calc.py so it returns the sum", "repo": "{{vars.repo}}",
+                                                     "provider": "scripted", "model": "cli-wf"}},
+            {"id": "gate", "type": "approval", "config": {"message": "ok?"}},
+            {"id": "note", "type": "action", "config": {"action": "notify.log", "params": {"message": "run {{nodes.fix.output.run_id}}"}}},
+            {"id": "done", "type": "end"}],
+            "edges": [{"from": "fix", "to": "gate"}, {"from": "gate", "to": "note", "when": "approved"},
+                      {"from": "gate", "to": "done", "when": "denied"}, {"from": "note", "to": "done"}]}
+        path = tmp_path / "wf.yaml"
+        path.write_text(yaml.safe_dump(raw))
+        return path
+
+    def test_templates_validate_save_start_and_decide(self, env, tmp_path, capsys):
+        cfg, repo = env
+        review = {"minimal_change": True, "unrelated_changes": False, "risk_notes": "", "missing_tests": [], "recommendation": "approve"}
+        ScriptedProvider.register("cli-wf", {"planner": [PLAN] * 2, "coder": [edit("a - b", "a + b")] * 2, "reviewer": [review] * 2})
+        assert cli.main(["--config", cfg, "workflows", "templates", "--json"]) == cli.EXIT_OK
+        assert len(json.loads(capsys.readouterr().out)) == 4
+        path = self.definition(repo, tmp_path)
+        assert cli.main(["--config", cfg, "workflows", "validate", str(path)]) == cli.EXIT_OK
+        assert cli.main(["--config", cfg, "workflows", "save", str(path), "--json"]) == cli.EXIT_OK
+        wf_id = json.loads(capsys.readouterr().out)["id"]
+        assert cli.main(["--config", cfg, "workflows", "list", "--json"]) == cli.EXIT_OK
+        assert [w["name"] for w in json.loads(capsys.readouterr().out)] == ["cli-flow"]
+
+        # start follows the run until a person is needed: a distinct exit code and a hint on what to run
+        assert cli.main(["--config", cfg, "workflows", "start", wf_id, "--json"]) == cli.EXIT_NEEDS_CONFIRMATION
+        run_id = next(e["workflow_run_id"] for e in lines(capsys) if "workflow_run_id" in e)
+        assert cli.main(["--config", cfg, "workflows", "decide", run_id, "gate", "approve", "--json"]) == cli.EXIT_OK
+        capsys.readouterr()
+        assert cli.main(["--config", cfg, "workflows", "show", run_id, "--json"]) == cli.EXIT_OK
+        shown = json.loads(capsys.readouterr().out)
+        assert shown["status"] == "completed" and next(s for s in shown["steps"] if s["node_id"] == "note")["output"]["logged"].startswith("run ")
+        assert cli.main(["--config", cfg, "workflows", "decide", run_id, "gate", "deny"]) == cli.EXIT_USAGE  # already decided
+
+    def test_invalid_definitions_report_every_problem(self, env, tmp_path, capsys):
+        import yaml
+
+        cfg, repo = env
+        path = tmp_path / "bad.yaml"
+        path.write_text(yaml.safe_dump({"name": "bad", "trigger": {"type": "manual"}, "nodes": [
+            {"id": "a", "type": "action", "config": {"action": "github.comment", "params": {}}}, {"id": "b", "type": "end"}],
+            "edges": [{"from": "a", "to": "b"}]}))
+        assert cli.main(["--config", cfg, "workflows", "validate", str(path)]) == cli.EXIT_USAGE
+        assert "human approval" in capsys.readouterr().err
+        assert cli.main(["--config", cfg, "workflows", "validate", str(tmp_path / "missing.yaml")]) == cli.EXIT_USAGE
+
+    def test_a_template_is_saved_bound_to_variables(self, env, capsys):
+        cfg, repo = env
+        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-pr", "--var", f"repo={repo}", "--json"]) == cli.EXIT_OK
+        assert json.loads(capsys.readouterr().out)["name"] == "issue-to-pr"
+        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-pr"]) == cli.EXIT_USAGE  # unbound

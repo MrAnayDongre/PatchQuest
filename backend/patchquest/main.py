@@ -20,6 +20,7 @@ from patchquest.api.routes_runtime import router as runtime_router
 from patchquest.api.routes_scheduler import router as scheduler_router
 from patchquest.api.routes_search import router as search_router
 from patchquest.api.routes_settings import router as settings_router
+from patchquest.api.routes_workflows import router as workflows_router
 from patchquest.api.schemas import HealthResponse
 from patchquest.config import get_config
 from patchquest.database import init_db
@@ -38,9 +39,13 @@ async def lifespan(app: FastAPI):
 
     from patchquest.scheduler.scheduler_loop import start_scheduler_loop, stop_scheduler_loop
     await start_scheduler_loop(poll_interval=30)
+    from patchquest.workflows.runtime import start_loop as start_workflows
+    from patchquest.workflows.runtime import stop_loop as stop_workflows
+    await start_workflows()
 
     yield
 
+    await stop_workflows()
     await stop_scheduler_loop()
 
 
@@ -65,6 +70,7 @@ app.add_middleware(
 app.include_router(runs_router)
 app.include_router(reports_router)
 app.include_router(metrics_router)
+app.include_router(workflows_router)
 # The provider catalogue and health are global and read-only; the outbound test needs a write permission.
 app.include_router(providers_router, dependencies=[Depends(require(Permission.RUN_READ))])
 # These features keep global (not per-workspace) data. Until they are tenant-scoped they work only while a

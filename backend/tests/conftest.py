@@ -14,6 +14,7 @@ from patchquest.config import AppConfig, set_config
 from patchquest.database import init_db, set_db_path
 from patchquest.providers import health as _health
 from patchquest.runtime import retry as _retry
+from patchquest.workflows import runtime as _wf_runtime
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +28,7 @@ def isolated_runtime(tmp_path_factory, tmp_path, monkeypatch):
     for var in ("PATCHQUEST_API_TOKEN", "PATCHQUEST_DB", "PATCHQUEST_CONFIG"):
         monkeypatch.delenv(var, raising=False)
     _health.reset()
+    _wf_runtime.set_engine(None)
     _poc._UNSUPPORTED.clear()
     _roles._CONSTRAINED_UNRELIABLE.clear()
     ScriptedProvider.scripts.clear()

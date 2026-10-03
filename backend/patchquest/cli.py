@@ -527,6 +527,126 @@ def _cmd_trace(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _load_definition(path: str) -> dict[str, Any]:
+    import yaml
+
+    with open(path, encoding="utf-8") as fh:
+        loaded = yaml.safe_load(fh)  # JSON is valid YAML, so one loader reads both
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} does not contain a workflow definition")
+    return loaded
+
+
+async def _workflows(args: argparse.Namespace) -> int:
+    from patchquest.domain.identity import LOCAL_WORKSPACE_ID
+    from patchquest.domain.workflows import DefinitionError, parse
+    from patchquest.workflows import store
+    from patchquest.workflows.engine import WorkflowError
+    from patchquest.workflows.runtime import get_engine
+    from patchquest.workflows.templates import TEMPLATES, instantiate
+
+    engine = get_engine()
+    cmd = args.wf_cmd
+
+    def problems_out(items: list[Any]) -> int:
+        for p in items:
+            print(f"  ✗ {p.message}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if cmd == "templates":
+        rows = [{"name": n, "description": t["description"], "trigger": t["trigger"]["type"]} for n, t in sorted(TEMPLATES.items())]
+        if args.json:
+            _emit_json(rows)
+        else:
+            for r in rows:
+                print(f"{r['name']:<22} {r['trigger']:<32} {r['description']}")
+        return EXIT_OK
+    if cmd in ("validate", "save"):
+        try:
+            raw = instantiate(args.template, **dict(v.split("=", 1) for v in args.var or [])) if args.template else _load_definition(args.file)
+            wf = parse(raw)
+        except DefinitionError as exc:
+            return problems_out(exc.problems)
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        found = engine.check(wf)
+        if found:
+            return problems_out(found)
+        if cmd == "validate":
+            print("valid", file=sys.stderr)
+            return EXIT_OK
+        with get_db() as conn:
+            wf_id, version = store.save_version(conn, args.workspace or LOCAL_WORKSPACE_ID, wf, "cli")
+        _emit_json({"id": wf_id, "name": wf.name, "version": version}) if args.json else print(f"saved {wf.name} v{version} ({wf_id})")
+        return EXIT_OK
+    if cmd == "list":
+        with get_db() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, workspace_id, name, version, trigger_type FROM workflows w WHERE version = (SELECT MAX(version) FROM workflows x "
+                "WHERE x.workspace_id = w.workspace_id AND x.name = w.name) ORDER BY name")]
+        _emit_json(rows) if args.json else [print(f"{r['id']}  {r['name']:<24} v{r['version']:<3} {r['trigger_type']}") for r in rows]
+        return EXIT_OK
+    if cmd == "runs":
+        with get_db() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, workflow_id, status, created_at, error FROM workflow_runs ORDER BY created_at DESC LIMIT ?", (args.limit,))]
+        _emit_json(rows) if args.json else [print(f"{r['id']}  {r['status']:<10} {r['created_at'][:19]}  {r['error'] or ''}") for r in rows]
+        return EXIT_OK
+    try:
+        if cmd == "start":
+            variables = dict(v.split("=", 1) for v in args.var or [])
+            run_id = engine.start(args.workflow_id, {"type": "manual", "payload": {}}, variables=variables, created_by="cli")
+            print(f"workflow run {run_id}", file=sys.stderr)
+            return await _follow_workflow(engine, str(run_id), args.json)
+        if cmd == "show":
+            with get_db() as conn:
+                run = store.get_run(conn, args.run_id)
+                payload = {**run, "steps": store.steps(conn, args.run_id), "events": store.events(conn, args.run_id)}
+            if args.json:
+                _emit_json(payload)
+            else:
+                print(f"{run['id']}  {run['status']}  {run['error'] or ''}")
+                for s in payload["steps"]:
+                    print(f"  {s['node_id']:<16} visit {s['visit']}  {s['status']}")
+            return EXIT_OK
+        if cmd == "decide":
+            await engine.decide(args.run_id, args.node_id, args.decision, "cli")
+            return await _follow_workflow(engine, args.run_id, args.json)
+        if cmd == "cancel":
+            await engine.cancel(args.run_id, "cli")
+            return EXIT_OK
+    except (WorkflowError, store.WorkflowNotFound) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    return EXIT_USAGE
+
+
+async def _follow_workflow(engine: Any, run_id: str, json_mode: bool) -> int:
+    """Advance the run, printing new events, until it ends or needs a person."""
+    from patchquest.workflows import store
+
+    seen = 0
+    while True:
+        await engine.tick()
+        with get_db() as conn:
+            run = store.get_run(conn, run_id)
+            new = store.events(conn, run_id, seen)
+            waiting = [s for s in store.steps(conn, run_id) if s["status"] in ("waiting", "uncertain") and s["wait_kind"] != "child_run"]
+        for e in new:
+            seen = e["id"]
+            _emit_json(e) if json_mode else print(f"  {e['type']:<20} {e['node_id'] or '':<14} {e['message'] or ''}", file=sys.stderr)
+        if run["status"] in ("completed", "failed", "cancelled"):
+            print(f"workflow {run['status']}" + (f": {run['error']}" if run["error"] else ""), file=sys.stderr)
+            return EXIT_OK if run["status"] == "completed" else EXIT_FAILED
+        if waiting and not any(s["wait_kind"] == "child_run" for s in waiting):
+            for s in waiting:
+                hint = f"patchquest workflows decide {run_id} {s['node_id']} approve|deny" if s["wait_kind"] == "approval" else s["wait_kind"] or s["status"]
+                print(f"waiting at {s['node_id']}: {hint}", file=sys.stderr)
+            return EXIT_NEEDS_CONFIRMATION
+        await asyncio.sleep(0.4)
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -756,6 +876,35 @@ def build_parser() -> argparse.ArgumentParser:
     tr_ = sub.add_parser("trace", help="export a run as an OpenTelemetry trace (OTLP/JSON)")
     tr_.add_argument("run_id")
     tr_.add_argument("--endpoint", help="POST it to an OTLP/HTTP collector, e.g. http://localhost:4318/v1/traces")
+    wf = sub.add_parser("workflows", help="durable workflows: define, validate, start, approve")
+    wsub = wf.add_subparsers(dest="wf_cmd", required=True)
+    for name, helptext in (("templates", "list the ready-made workflows"), ("list", "saved workflows"),
+                           ("runs", "recent workflow runs")):
+        x = wsub.add_parser(name, help=helptext)
+        x.add_argument("--json", action="store_true")
+        if name == "runs":
+            x.add_argument("--limit", type=int, default=20)
+    for name, helptext in (("validate", "check a definition without saving it"), ("save", "save a definition as a new version")):
+        x = wsub.add_parser(name, help=helptext)
+        x.add_argument("file", nargs="?", help="YAML or JSON definition")
+        x.add_argument("--template", help="start from a template (needs --var for its variables)")
+        x.add_argument("--var", action="append", metavar="NAME=VALUE", help="bind a template variable")
+        x.add_argument("--workspace")
+        x.add_argument("--json", action="store_true")
+    ws_ = wsub.add_parser("start", help="start a run and follow it until it finishes or needs a person")
+    ws_.add_argument("workflow_id")
+    ws_.add_argument("--var", action="append", metavar="NAME=VALUE")
+    ws_.add_argument("--json", action="store_true")
+    sh = wsub.add_parser("show", help="steps and events of a run")
+    sh.add_argument("run_id")
+    sh.add_argument("--json", action="store_true")
+    dc = wsub.add_parser("decide", help="answer an approval step")
+    dc.add_argument("run_id")
+    dc.add_argument("node_id")
+    dc.add_argument("decision", choices=["approve", "deny"])
+    dc.add_argument("--json", action="store_true")
+    cn = wsub.add_parser("cancel", help="cancel a run")
+    cn.add_argument("run_id")
     en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
@@ -791,6 +940,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run(args))
     if args.cmd == "resume":
         return asyncio.run(_resume(args))
+    if args.cmd == "workflows":
+        return asyncio.run(_workflows(args))
     if args.cmd == "fork":
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
