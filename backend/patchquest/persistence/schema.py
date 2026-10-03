@@ -67,8 +67,14 @@ def _checkpoints(conn: sqlite3.Connection) -> None:
     run_script(conn, _CHECKPOINTS)
 
 
+def _failure_kind(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "runs", {"failure_kind": "TEXT"})
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_failure ON runs(failure_kind) WHERE failure_kind IS NOT NULL")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
     Migration(3, "checkpoints", _checkpoints),
+    Migration(4, "run failure kind", _failure_kind),
 ]

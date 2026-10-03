@@ -500,12 +500,38 @@ class TestRetryBehavior:
                 mock_client.__aexit__ = AsyncMock(return_value=False)
                 mock_client_cls.return_value = mock_client
 
-                with pytest.raises(RuntimeError, match="401"):
+                with pytest.raises(httpx.HTTPStatusError, match="401") as err:
                     await provider.complete(
                         [{"role": "user", "content": "test"}], config
                     )
 
         assert call_count == 1
+        from patchquest.domain.failures import FailureKind, classify
+
+        assert classify(err.value).kind is FailureKind.MODEL_AUTH
+
+    @pytest.mark.asyncio
+    async def test_server_errors_are_not_retried_inside_the_provider(self):
+        """Retrying is the central engine's job; a private loop here would multiply with it."""
+        import httpx
+
+        calls = []
+
+        async def mock_post(*args, **kwargs):
+            calls.append(1)
+            return httpx.Response(503, text="down", request=httpx.Request("POST", "https://test/responses"))
+
+        config = ModelConfig(provider="nvidia", model="m", api_key_env="NVIDIA_API_KEY",
+                             base_url="https://integrate.api.nvidia.com/v1")
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvapi-test"}), patch("httpx.AsyncClient") as cls:
+            client = AsyncMock()
+            client.post = mock_post
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            cls.return_value = client
+            with pytest.raises(httpx.HTTPStatusError):
+                await NvidiaProvider().complete([{"role": "user", "content": "x"}], config)
+        assert len(calls) == 1
 
     @pytest.mark.asyncio
     async def test_no_fallback_to_mock(self):

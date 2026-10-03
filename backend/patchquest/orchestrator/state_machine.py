@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from patchquest import __version__
 from patchquest.config import get_config
 from patchquest.database import get_db, now_iso
+from patchquest.domain.failures import Failure, FailureKind, PatchQuestError, classify
 from patchquest.domain.runs import IllegalTransition, RunStatus
 from patchquest.orchestrator import snapshot
 from patchquest.orchestrator.event_bus import event_bus
@@ -149,6 +150,7 @@ class RunStateMachine:
         self._current_phase: str | None = None
         self._patch_secret = False  # the patch itself introduced (or tried to introduce) a secret
         self._promotion_reconciled: str | None = None  # "applied": resume found promotion had already landed
+        self._failure: Failure | None = None  # the first thing that went wrong; becomes the run's failure kind
         self._no_patch = False  # a mutating task for which the agent produced nothing and said nothing
         self._cancelled = asyncio.Event()
         self.attempt = 1  # incremented by resume; every event carries it
@@ -209,6 +211,7 @@ class RunStateMachine:
             await self._complete_run()
         except Exception as e:
             logger.error(f"Run {self.run_id} crashed: {e}\n{traceback.format_exc()}")
+            self._failure = self._failure or classify(e)
             await self._fail_run(str(e))
         finally:
             if self._workspace is not None:
@@ -276,7 +279,10 @@ class RunStateMachine:
         except Exception as e:
             self.phase_statuses[phase] = PhaseStatus.FAILED
             self.ctx.errors.append(f"{phase.value}: {e}")
-            await self._emit("phase_failed", phase=phase.value, status="failed", message=str(e))
+            failure = classify(e)
+            self._failure = self._failure or failure
+            await self._emit("phase_failed", phase=phase.value, status="failed", message=str(e),
+                             payload={"failure": failure.to_payload()})
 
     async def _skip_phase(self, phase: Phase, message: str) -> None:
         """Mark the *current* phase skipped from inside its handler."""
@@ -521,7 +527,7 @@ class RunStateMachine:
             await self._emit("patch_rejected", phase="patching", message=f"Patch rejected: {error}")
             if self._patch_secret:
                 return  # a blocked secret is a rejected patch, not a crashed run
-            raise RuntimeError(f"Failed to apply patch: {error}")
+            raise PatchQuestError(FailureKind.PATCH_APPLY, f"Failed to apply patch: {error}")
         if not applied:
             return  # model reported nothing to change
         await self._emit("patch_proposed", phase="patching", message="Patch proposed",
@@ -748,9 +754,11 @@ class RunStateMachine:
         except Exception as report_exc:
             logger.warning("Failed to generate report for failed run %s: %s", self.run_id, report_exc)
 
-        self._move(RunStatus(status), reason,
-                   fields={"outcome": self.ctx.outcome or "rejected", "verdict": self.ctx.verdict})
-        await self._emit("run_failed", message=f"Run failed: {reason}")
+        failure = (Failure(FailureKind.USER_CANCELLED, reason) if status == "cancelled"
+                   else self._failure or Failure(FailureKind.INTERNAL_INVARIANT, reason))
+        self._move(RunStatus(status), reason, fields={
+            "outcome": self.ctx.outcome or "rejected", "verdict": self.ctx.verdict, "failure_kind": failure.kind.value})
+        await self._emit("run_failed", message=f"Run failed: {reason}", payload={"failure": failure.to_payload()})
 
     def _update_run_phase(self, phase: str) -> None:
         with get_db() as conn:

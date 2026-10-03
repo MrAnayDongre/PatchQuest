@@ -12,6 +12,7 @@ from patchquest.agents import roles as _roles
 from patchquest.agents.providers_scripted import ScriptedProvider
 from patchquest.config import AppConfig, set_config
 from patchquest.database import init_db, set_db_path
+from patchquest.runtime import retry as _retry
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +22,7 @@ def isolated_runtime(tmp_path_factory, tmp_path, monkeypatch):
     init_db()
     set_config(AppConfig())
     monkeypatch.setattr("patchquest.runtime.workspace.WORKSPACE_BASE", tmp_path_factory.mktemp("workspaces"))
-    monkeypatch.setattr(_roles, "BACKOFF_SECONDS", (0, 0))
+    monkeypatch.setattr(_retry, "DEFAULT_POLICY", _retry.RetryPolicy(max_attempts=3, base_delay_s=0, max_delay_s=0))
     for var in ("PATCHQUEST_API_TOKEN", "PATCHQUEST_DB", "PATCHQUEST_CONFIG"):
         monkeypatch.delenv(var, raising=False)
     _poc._UNSUPPORTED.clear()

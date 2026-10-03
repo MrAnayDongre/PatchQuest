@@ -43,24 +43,23 @@ from patchquest.agents.structured_outputs import (
 from patchquest.config import get_config
 from patchquest.context import build_context, render_context
 from patchquest.database import get_db, now_iso
+from patchquest.domain.failures import FailureKind, PatchQuestError, classify
 from patchquest.orchestrator.run_context import RunContext
 from patchquest.providers.catalog import PROVIDER_CATALOG
+from patchquest.runtime import retry
 from patchquest.tools.secret_guard import redact_secrets
 
 logger = logging.getLogger(__name__)
-
-# Transient failures are retried with exponential backoff; everything else fails immediately.
-MAX_ATTEMPTS = 3
-BACKOFF_SECONDS = (0.5, 1.5)
-RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
-
 
 # (provider, base_url, model) pairs where constrained decoding was seen to misbehave (auto mode).
 _CONSTRAINED_UNRELIABLE: set[tuple[str, str, str]] = set()
 
 
-class BudgetExceeded(RuntimeError):
+class BudgetExceeded(PatchQuestError):
     """The run used up its model-call or token budget."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(FailureKind.BUDGET_EXHAUSTED, detail)
 
 
 @dataclass
@@ -103,16 +102,6 @@ def _resolve_model(role_name: str, ctx: RunContext | None):
     )
 
 
-def _is_transient(exc: BaseException) -> bool:
-    try:
-        import httpx
-    except ImportError:  # pragma: no cover
-        return False
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in RETRYABLE_STATUS
-    return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
-
-
 def _response_format(provider, model_config: ModelConfig, schema: type[BaseModel] | None) -> dict | None:
     """Ask for constrained output only when the provider declares support for it."""
     if schema is None:
@@ -124,6 +113,11 @@ def _response_format(provider, model_config: ModelConfig, schema: type[BaseModel
     if caps.json_object:
         return {"type": "json_object"}
     return None
+
+
+def _retries_left(ctx: RunContext | None) -> int | None:
+    limit = get_config().agent.max_retries
+    return None if ctx is None or not limit else max(0, limit - ctx.retries)
 
 
 def _charge_budget(ctx: RunContext | None) -> None:
@@ -175,7 +169,7 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
 
     valid, err = provider.validate_config(model_config)
     if not valid:
-        raise RuntimeError(f"Provider '{model_config.provider}' configuration error: {err}")
+        raise PatchQuestError(FailureKind.ENVIRONMENT_FAILURE, f"Provider '{model_config.provider}' configuration error: {err}")
     _charge_budget(ctx)
 
     limit = await context_limit(model_config)
@@ -192,7 +186,9 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
     started_at, t0 = now_iso(), time.monotonic()
 
     last: BaseException | None = None
-    for attempt in range(MAX_ATTEMPTS):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             response = await provider.complete(messages, model_config, response_format)
             if degraded_note:
@@ -221,12 +217,18 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
                 messages = build(shrink)
                 logger.warning("role=%s prompt exceeded the context window; shrinking to %.0f%%", role_name, shrink * 100)
                 continue
-            if attempt + 1 < MAX_ATTEMPTS and _is_transient(exc):
-                delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
-                logger.warning("role=%s transient provider error (%s); retry in %.1fs", role_name, exc, delay)
-                await asyncio.sleep(delay)
-                continue
-            break
+            failure = classify(exc)
+            decision = retry.decide(failure, attempt, policy=retry.DEFAULT_POLICY, retries_left=_retries_left(ctx))
+            if not decision.retry:
+                break
+            if ctx is not None:
+                ctx.retries += 1
+                if ctx.event_sink:
+                    await ctx.event_sink("retry_scheduled", {
+                        "role": role_name, "attempt": attempt, "delay_s": round(decision.delay_s, 2),
+                        "failure": failure.to_payload(), "operation": "model_call"})
+            logger.warning("role=%s %s; retry in %.1fs", role_name, failure.kind.value, decision.delay_s)
+            await asyncio.sleep(decision.delay_s)
 
     if last is None:  # pragma: no cover - the loop always records an exception before breaking
         raise RuntimeError(f"role {role_name} produced no response")
@@ -237,7 +239,9 @@ async def _complete(role_name: str, system_prompt: str, user_content: str, ctx: 
             message = message.replace(key_value, "***REDACTED***")
     await asyncio.to_thread(_record, ctx, role_name, model_config.provider, model_config.model, messages,
                             started_at, int((time.monotonic() - t0) * 1000), None, "error", message)
-    raise RuntimeError(f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}") from last
+    failure = classify(last)
+    raise PatchQuestError(failure.kind, f"LLM provider '{model_config.provider}' call failed: {redact_secrets(message)}",
+                          retry_after=failure.retry_after) from last
 
 
 def _constrain_key(ctx: RunContext | None, role_name: str) -> tuple[str, str, str]:

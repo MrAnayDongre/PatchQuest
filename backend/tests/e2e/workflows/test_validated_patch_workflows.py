@@ -357,3 +357,85 @@ class TestApplyFeedback:
         script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
         retry_prompt = script.calls_for("coder")[1]["messages"][1]["content"]
         assert "could not be applied" in retry_prompt and "return a - b" in retry_prompt
+
+
+class TestFailureKinds:
+    """Every way a run can fail is recorded as a typed failure, on the run and in its events."""
+
+    @staticmethod
+    def raises(exc):
+        def respond(_messages):
+            raise exc
+        return respond
+
+    @staticmethod
+    def failure_payload(rid, event_type):
+        return next(e for e in fetch_events(rid) if e["type"] == event_type)["payload"]["failure"]
+
+    @pytest.mark.asyncio
+    async def test_provider_rejecting_credentials(self, repo):
+        import httpx
+
+        req = httpx.Request("POST", "http://x")
+        err = httpx.HTTPStatusError("e", request=req, response=httpx.Response(401, text="no", request=req))
+        sm, rid = await run_scripted(repo, {"planner": [self.raises(err)]})
+        row = run_row(rid)
+        assert row["status"] == "failed" and row["failure_kind"] == "MODEL_AUTH"
+        payload = self.failure_payload(rid, "run_failed")
+        assert payload["retryable"] is False and payload["origin"] == "model" and payload["recovery"]
+        assert (repo / "calc.py").read_text() == CALC_BUG
+
+    @pytest.mark.asyncio
+    async def test_exhausted_model_budget(self, repo):
+        cfg = AppConfig()
+        cfg.safety.approval_timeout_seconds = 0
+        cfg.agent.max_model_calls = 2
+        set_config(cfg)
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
+        assert run_row(rid)["failure_kind"] == "BUDGET_EXHAUSTED"
+        assert self.failure_payload(rid, "phase_failed")["kind"] == "BUDGET_EXHAUSTED"
+
+    @pytest.mark.asyncio
+    async def test_edit_that_never_applies(self, repo):
+        bad = {"edits": [{"path": "calc.py", "search": "text that is not there", "replace": "x"}],
+               "create": [], "delete": [], "rationale": ""}
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [bad, bad, bad]})
+        assert run_row(rid)["failure_kind"] == "PATCH_APPLY"
+        assert "patch_retry" in event_types(rid)
+        assert (repo / "calc.py").read_text() == CALC_BUG
+
+    @pytest.mark.asyncio
+    async def test_user_cancellation(self, repo):
+        async def canceller(sm, rid):
+            for _ in range(200):
+                if any(e["type"] == "patch_staged" for e in fetch_events(rid)):
+                    sm.cancel()
+                    return
+                await asyncio.sleep(0.02)
+
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]}, wait_for=canceller)
+        assert run_row(rid)["failure_kind"] == "USER_CANCELLED"
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_is_an_internal_failure_not_a_retryable_one(self, repo):
+        sm, rid = await run_scripted(repo, {"planner": [self.raises(ValueError("boom"))]})
+        assert run_row(rid)["failure_kind"] == "INTERNAL_INVARIANT"
+        assert self.failure_payload(rid, "run_failed")["retryable"] is False
+
+    @pytest.mark.asyncio
+    async def test_transient_provider_errors_are_retried_and_visible(self, repo):
+        import httpx
+
+        calls = {"n": 0}
+
+        def flaky(_messages):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise httpx.ReadTimeout("slow")
+            return PLAN
+
+        sm, rid = await run_scripted(repo, {"planner": [flaky, flaky, flaky], "coder": [FIX]})
+        assert run_row(rid)["status"] == "completed" and calls["n"] == 3
+        retries = [e for e in fetch_events(rid) if e["type"] == "retry_scheduled"]
+        assert len(retries) == 2 and retries[0]["payload"]["failure"]["kind"] == "MODEL_TIMEOUT"
+        assert sm.ctx.retries == 2

@@ -10,7 +10,7 @@ from patchquest.domain.runs import TERMINAL, IllegalTransition, RunStatus, Stale
 from patchquest.persistence import ledger
 
 # Columns a transition may set alongside the status (everything else goes through its own writer).
-_SETTABLE = frozenset({"outcome", "verdict", "current_phase"})
+_SETTABLE = frozenset({"outcome", "verdict", "current_phase", "failure_kind"})
 
 
 @dataclass(frozen=True)
