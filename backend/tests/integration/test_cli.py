@@ -344,6 +344,6 @@ class TestWorkflowCommands:
 
     def test_a_template_is_saved_bound_to_variables(self, env, capsys):
         cfg, repo = env
-        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-pr", "--var", f"repo={repo}", "--json"]) == cli.EXIT_OK
-        assert json.loads(capsys.readouterr().out)["name"] == "issue-to-pr"
-        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-pr"]) == cli.EXIT_USAGE  # unbound
+        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-proposal", "--var", f"repo={repo}", "--json"]) == cli.EXIT_OK
+        assert json.loads(capsys.readouterr().out)["name"] == "issue-to-proposal"
+        assert cli.main(["--config", cfg, "workflows", "save", "--template", "issue-to-proposal"]) == cli.EXIT_USAGE  # unbound

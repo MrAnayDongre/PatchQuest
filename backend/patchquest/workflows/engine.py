@@ -87,6 +87,12 @@ class TriggerEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     actor: str = "external"
 
+    @classmethod
+    def from_envelope(cls, envelope: Any) -> TriggerEvent:
+        """From a connector ``EventEnvelope``. Workflow triggers are namespaced by source (``github.issues.labeled``)."""
+        etype = envelope.type if envelope.type.startswith(f"{envelope.source}.") else f"{envelope.source}.{envelope.type}"
+        return cls(envelope.source, etype, envelope.external_id, envelope.workspace_id, dict(envelope.payload), envelope.actor)
+
     def as_dict(self) -> dict[str, Any]:
         return {"source": self.source, "type": self.type, "external_id": self.external_id, "actor": self.actor, "payload": self.payload}
 

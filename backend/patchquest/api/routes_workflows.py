@@ -18,7 +18,7 @@ from patchquest.domain.workflows import DefinitionError, Problem, parse, to_dict
 from patchquest.workflows import store
 from patchquest.workflows.engine import WorkflowError
 from patchquest.workflows.runtime import get_engine
-from patchquest.workflows.templates import TEMPLATES
+from patchquest.workflows.templates import TEMPLATES, requires
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -112,7 +112,8 @@ async def list_workflows(principal: CurrentPrincipal) -> list[dict[str, Any]]:
 
 @router.get("/templates")
 async def templates(principal: CurrentPrincipal) -> list[dict[str, Any]]:
-    return [{"name": name, "description": t["description"], "trigger": t["trigger"]["type"], "variables": t["variables"]}
+    return [{"name": name, "description": t["description"], "trigger": t["trigger"]["type"], "variables": t["variables"],
+             "requires": requires(name)}
             for name, t in sorted(TEMPLATES.items())]
 
 

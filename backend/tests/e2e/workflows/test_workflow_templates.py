@@ -13,7 +13,7 @@ from patchquest.domain.workflows import ValidationPolicy, parse, validate
 from patchquest.workflows import store
 from patchquest.workflows.catalog import ACTIONS, LocalActions
 from patchquest.workflows.engine import TriggerEvent, WorkflowEngine
-from patchquest.workflows.templates import TEMPLATES, instantiate
+from patchquest.workflows.templates import TEMPLATES, instantiate, requires
 from tests.e2e.workflows.test_workflow_engine import (
     FIX,
     PLAN,
@@ -40,8 +40,8 @@ class Backend:
 
 
 EVENTS = {
-    "issue-to-pr": TriggerEvent("github", "github.issues.labeled", "d1", WS, {"label": "agent-ready", "title": "add is wrong", "body": "returns a-b"}),
-    "failed-ci-repair": TriggerEvent("github", "github.check_suite.completed", "d2", WS, {"conclusion": "failure", "branch": "main"}),
+    "issue-to-proposal": TriggerEvent("github", "github.issues.labeled", "d1", WS, {"label": "agent-ready", "number": 7, "title": "add is wrong", "body": "returns a-b"}),
+    "failed-ci-repair": TriggerEvent("github", "github.check_suite.completed", "d2", WS, {"conclusion": "failure", "head_branch": "main"}),
     "oncall-investigation": TriggerEvent("slack", "slack.message.mention", "d3", WS, {"text": "payments are slow"}),
 }
 
@@ -74,7 +74,7 @@ def test_an_event_triggered_template_cannot_be_saved_without_binding_its_variabl
 
 def test_instantiate_rejects_unknown_variables():
     with pytest.raises(ValueError, match="unknown variable"):
-        instantiate("issue-to-pr", reop="x")
+        instantiate("issue-to-proposal", reop="x")
 
 
 @pytest.mark.parametrize("name", sorted(EVENTS))
@@ -95,7 +95,11 @@ async def test_event_triggered_templates_run_to_completion_after_approval(name, 
     await engine.decide(run_id, "review", "approve", "user:ana")
     run = await settle(engine, run_id, "completed")
     assert run["error"] is None
-    assert backend.calls and all(approver == "user:ana" for _, _, approver in backend.calls)
+    uses_connector = name in ("issue-to-proposal", "oncall-investigation")
+    if uses_connector:
+        assert backend.calls and all(approver == "user:ana" for _, _, approver in backend.calls)
+    else:
+        assert backend.calls == []  # these only record to the workflow's own history; no connector was needed
 
 
 def _all_steps(run_id):
@@ -104,18 +108,17 @@ def _all_steps(run_id):
 
 
 @pytest.mark.asyncio
-async def test_dependency_upgrade_runs_from_a_manual_start(tmp_path):
+async def test_dependency_upgrade_runs_from_a_manual_start_and_records_the_result(tmp_path):
     repo = make_calc_repo(tmp_path / "r")
     ScriptedProvider.register("tpl", {"planner": [PLAN] * 3, "coder": [FIX] * 3, "reviewer": [REVIEW] * 3})
-    backend = Backend()
-    engine = WorkflowEngine(TaskService(), LocalActions({"github": backend}), clock=Clock())
+    engine = WorkflowEngine(TaskService(), LocalActions(), clock=Clock())  # no connector needed
     with get_db() as conn:
         wid, _ = store.save_version(conn, WS, parse(instantiate("dependency-upgrade", repo=str(repo), provider="scripted", model="tpl")), "t")
     run_id = engine.start(wid, {"type": "manual"})
-    await settle(engine, run_id, lambda r: any(s["status"] == "waiting" and s["node_id"] == "review" for s in _all_steps(run_id)))
+    await waiting_at(engine, run_id, "review")
     await engine.decide(run_id, "review", "approve", "user:ana")
     await settle(engine, run_id, "completed")
-    assert [c[0] for c in backend.calls] == ["github.create_pull_request"]
+    assert step(run_id, "open_pr")["output"]["logged"].startswith("Dependency upgrade validated in run ")
 
 
 @pytest.mark.asyncio
@@ -124,12 +127,18 @@ async def test_an_unconnected_connector_fails_the_step_clearly_instead_of_preten
     ScriptedProvider.register("tpl", {"planner": [PLAN] * 3, "coder": [FIX] * 3, "reviewer": [REVIEW] * 3})
     engine = WorkflowEngine(TaskService(), LocalActions(), clock=Clock())  # no connectors configured
     with get_db() as conn:
-        wid, _ = store.save_version(conn, WS, parse(instantiate("dependency-upgrade", repo=str(repo), provider="scripted", model="tpl")), "t")
-    run_id = engine.start(wid, {"type": "manual"})
-    await settle(engine, run_id, lambda r: any(s["status"] == "waiting" and s["node_id"] == "review" for s in _all_steps(run_id)))
+        store.save_version(conn, WS, parse(instantiate("issue-to-proposal", repo=str(repo), provider="scripted", model="tpl")), "t")
+    [run_id] = await engine.deliver_event(EVENTS["issue-to-proposal"])
+    await waiting_at(engine, run_id, "review")
     await engine.decide(run_id, "review", "approve", "user:ana")
     run = await settle(engine, run_id, "failed")
-    assert "could not be reached" in run["error"] and step(run_id, "open_pr")["status"] == "failed"
+    assert "could not be reached" in run["error"] and step(run_id, "propose")["status"] == "failed"
+
+
+def test_templates_say_which_connectors_they_need():
+    assert requires("issue-to-proposal") == ["github"]
+    assert requires("oncall-investigation") == ["slack"]
+    assert requires("dependency-upgrade") == [] and requires("failed-ci-repair") == ["github"]
 
 
 @pytest.mark.asyncio

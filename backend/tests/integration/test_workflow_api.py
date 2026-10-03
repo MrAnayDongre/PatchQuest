@@ -125,7 +125,7 @@ async def test_start_errors_templates_and_cancel(tmp_path):
         r = await c.post(f"/api/workflows/{wf_id}/runs", json={})
         assert r.status_code == 422 and "missing variable" in r.json()["detail"]["message"]
         t = (await c.get("/api/workflows/templates")).json()
-        assert {x["name"] for x in t} == {"issue-to-pr", "failed-ci-repair", "dependency-upgrade", "oncall-investigation"}
+        assert {x["name"] for x in t} == {"issue-to-proposal", "failed-ci-repair", "dependency-upgrade", "oncall-investigation"}
 
         slow_wf = {"name": "nap", "trigger": {"type": "manual"}, "nodes": [{"id": "t", "type": "timer", "config": {"seconds": 3600}},
                                                                           {"id": "e", "type": "end"}], "edges": [{"from": "t", "to": "e"}]}

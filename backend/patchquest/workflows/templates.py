@@ -13,38 +13,39 @@ def _agent(task: str, node_id: str = "investigate") -> dict[str, Any]:
 
 
 TEMPLATES: dict[str, dict[str, Any]] = {
-    "issue-to-pr": {
-        "schema": 1, "name": "issue-to-pr",
-        "description": "A labelled issue becomes a validated patch, a human decides, then a pull request is opened and the team is told.",
+    "issue-to-proposal": {
+        "schema": 1, "name": "issue-to-proposal",
+        "description": "A labelled issue becomes a validated patch; after a person approves, the proposal is posted on the issue. "
+                       "(Opening a pull request needs a branch-push action PatchQuest does not have yet.)",
         "trigger": {"type": "github.issues.labeled", "filter": {"payload.label": "agent-ready"}},
         "variables": _VARS,
         "nodes": [
             _agent("Resolve this issue: {{trigger.payload.title}}\n\n{{trigger.payload.body}}"),
             {"id": "validated", "type": "condition", "config": {"if": {"left": "{{nodes.investigate.output.verdict}}", "op": "eq", "right": "passed"}}},
-            {"id": "review", "type": "approval", "config": {"message": "Open a pull request for run {{nodes.investigate.output.run_id}}?", "timeout_s": 86400}},
-            {"id": "open_pr", "type": "action", "config": {"action": "github.create_pull_request",
-                                                           "params": {"title": "{{trigger.payload.title}}", "body": "Opened by PatchQuest run {{nodes.investigate.output.run_id}}"}}},
-            {"id": "tell", "type": "action", "config": {"action": "slack.post_message", "params": {"text": "PR opened for: {{trigger.payload.title}}"}}},
-            {"id": "explain", "type": "action", "config": {"action": "notify.log", "params": {"message": "Not validated: no pull request"}}},
+            {"id": "review", "type": "approval", "config": {"message": "Post the proposed fix from run {{nodes.investigate.output.run_id}} on the issue?", "timeout_s": 86400}},
+            {"id": "propose", "type": "action", "config": {"action": "github.comment", "params": {
+                "issue_number": "{{trigger.payload.number}}",
+                "body": "PatchQuest validated a fix for this issue (run {{nodes.investigate.output.run_id}}). A maintainer can review its diff there."}}},
+            {"id": "explain", "type": "action", "config": {"action": "notify.log", "params": {"message": "Not validated: nothing was posted"}}},
             {"id": "done", "type": "end"},
         ],
         "edges": [{"from": "investigate", "to": "validated"}, {"from": "validated", "to": "review", "when": "true"},
-                  {"from": "validated", "to": "explain", "when": "false"}, {"from": "review", "to": "open_pr", "when": "approved"},
+                  {"from": "validated", "to": "explain", "when": "false"}, {"from": "review", "to": "propose", "when": "approved"},
                   {"from": "review", "to": "done", "when": "denied"}, {"from": "review", "to": "done", "when": "timeout"},
-                  {"from": "open_pr", "to": "tell"}, {"from": "tell", "to": "done"}, {"from": "explain", "to": "done"}],
+                  {"from": "propose", "to": "done"}, {"from": "explain", "to": "done"}],
     },
     "failed-ci-repair": {
         "schema": 1, "name": "failed-ci-repair",
-        "description": "A failing CI run is investigated and repaired; the result is reported on the pull request after approval.",
+        "description": "A failing CI run is investigated and repaired in isolation; after approval the proposed fix is recorded for review.",
         "trigger": {"type": "github.check_suite.completed", "filter": {"payload.conclusion": "failure"}},
         "variables": _VARS,
         "nodes": [
-            _agent("CI failed on {{trigger.payload.branch}}. Reproduce the failure and fix it with the smallest change."),
+            _agent("CI failed on {{trigger.payload.head_branch}}. Reproduce the failure and fix it with the smallest change."),
             {"id": "fixed", "type": "condition", "config": {"if": {"left": "{{nodes.investigate.output.verdict}}", "op": "eq", "right": "passed"}}},
-            {"id": "review", "type": "approval", "config": {"message": "Comment the proposed fix on {{trigger.payload.branch}}?", "timeout_s": 43200}},
-            {"id": "report", "type": "action", "config": {"action": "github.comment",
-                                                          "params": {"body": "PatchQuest proposes a fix (run {{nodes.investigate.output.run_id}})."}}},
-            {"id": "note", "type": "action", "config": {"action": "notify.log", "params": {"message": "Could not fix {{trigger.payload.branch}}"}}},
+            {"id": "review", "type": "approval", "config": {"message": "Record the proposed fix for {{trigger.payload.head_branch}}?", "timeout_s": 43200}},
+            {"id": "report", "type": "action", "config": {"action": "notify.log", "params": {
+                "message": "Proposed fix for {{trigger.payload.head_branch}} is ready in run {{nodes.investigate.output.run_id}}"}}},
+            {"id": "note", "type": "action", "config": {"action": "notify.log", "params": {"message": "Could not fix {{trigger.payload.head_branch}}"}}},
             {"id": "done", "type": "end"},
         ],
         "edges": [{"from": "investigate", "to": "fixed"}, {"from": "fixed", "to": "review", "when": "true"},
@@ -54,15 +55,15 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "dependency-upgrade": {
         "schema": 1, "name": "dependency-upgrade",
-        "description": "Started on a schedule or by hand: upgrade dependencies in isolation, run the tests, and ask before proposing it.",
+        "description": "Started by hand: upgrade dependencies in isolation, run the tests, and ask before recording the result for review.",
         "trigger": {"type": "manual"},
         "variables": _VARS,
         "nodes": [
             _agent("Upgrade outdated dependencies one at a time, keeping the test suite green. Do not change application code."),
             {"id": "green", "type": "condition", "config": {"if": {"left": "{{nodes.investigate.output.verdict}}", "op": "eq", "right": "passed"}}},
-            {"id": "review", "type": "approval", "config": {"message": "Propose the upgrade from run {{nodes.investigate.output.run_id}}?", "timeout_s": 259200}},
-            {"id": "open_pr", "type": "action", "config": {"action": "github.create_pull_request",
-                                                           "params": {"title": "Upgrade dependencies", "body": "Validated by PatchQuest run {{nodes.investigate.output.run_id}}"}}},
+            {"id": "review", "type": "approval", "config": {"message": "Record the upgrade from run {{nodes.investigate.output.run_id}}?", "timeout_s": 259200}},
+            {"id": "open_pr", "type": "action", "config": {"action": "notify.log", "params": {
+                "message": "Dependency upgrade validated in run {{nodes.investigate.output.run_id}}; review its diff"}}},
             {"id": "done", "type": "end"},
         ],
         "edges": [{"from": "investigate", "to": "green"}, {"from": "green", "to": "review", "when": "true"},
@@ -106,3 +107,14 @@ def instantiate(name: str, **variables: str) -> dict[str, Any]:
     for key, value in variables.items():
         definition["variables"][key] = {"default": value}
     return definition
+
+
+def requires(name: str) -> list[str]:
+    """Connectors a template needs (from its actions and trigger), so a user knows what to connect first."""
+    definition = TEMPLATES[name]
+    found = {definition["trigger"]["type"].split(".", 1)[0]} - {"manual"}
+    for node in definition["nodes"]:
+        action = node.get("config", {}).get("action")
+        if node["type"] == "action" and action and not action.startswith("notify."):
+            found.add(action.split(".", 1)[0])
+    return sorted(found)
