@@ -409,6 +409,59 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_admin(args: argparse.Namespace) -> int:
+    """Organisation, token and audit administration. Direct database access: whoever can run this owns the install."""
+    from patchquest.domain.identity import Role
+    from patchquest.persistence import identity as ids
+
+    def out(obj: Any, human: str) -> int:
+        if args.json:
+            _emit_json(obj)
+        else:
+            print(human)
+        return EXIT_OK
+
+    with get_db() as conn:
+        if args.admin_cmd == "init":
+            org = ids.create_org(conn, args.org)
+            ws = ids.create_workspace(conn, org, args.workspace)
+            owner = ids.create_principal(conn, org, args.owner)
+            ids.set_role(conn, owner, ws, Role.OWNER)
+            token_id, secret = ids.issue_token(conn, owner, "initial owner token")
+            ids.audit(conn, "org.init", actor="cli", org_id=org, workspace_id=ws, target=owner)
+            result = {"org_id": org, "workspace_id": ws, "owner_id": owner, "token_id": token_id, "token": secret}
+            return out(result, f"organisation {org}\nworkspace    {ws}\nowner        {owner}\ntoken        {secret}\n"
+                               "Store the token now; it is not shown again.")
+        if args.admin_cmd == "token":
+            if args.op == "create":
+                row = conn.execute("SELECT p.id, p.org_id FROM principals p WHERE p.name = ? AND p.org_id = "
+                                   "(SELECT org_id FROM workspaces WHERE id = ?)", (args.principal, args.workspace)).fetchone()
+                if row is None:
+                    pid = ids.create_principal(conn, conn.execute("SELECT org_id FROM workspaces WHERE id = ?",
+                                                                  (args.workspace,)).fetchone()["org_id"], args.principal,
+                                               "service" if args.role == Role.SERVICE.value else "user")
+                else:
+                    pid = row["id"]
+                ids.set_role(conn, pid, args.workspace, Role(args.role))
+                token_id, secret = ids.issue_token(conn, pid, args.label or "", args.expires_days)
+                ids.audit(conn, "token.create", actor="cli", workspace_id=args.workspace, target=token_id,
+                          detail={"principal": args.principal, "role": args.role})
+                return out({"token_id": token_id, "token": secret, "principal_id": pid},
+                           f"token {token_id}\n{secret}\nStore it now; it is not shown again.")
+            if args.op == "revoke":
+                ok = ids.revoke_token(conn, args.token_id)
+                ids.audit(conn, "token.revoke", actor="cli", target=args.token_id, outcome="ok" if ok else "not_found")
+                return out({"revoked": ok}, "revoked" if ok else "no active token with that id") if ok else EXIT_USAGE
+            rows = ids.list_tokens(conn)
+            return out(rows, "\n".join(f"{r['id']}  {r['prefix']}…  {r['principal']:<16} {r['label'] or '':<20} "
+                                        f"{'REVOKED' if r['revoked_at'] else 'active'}" for r in rows) or "(no tokens)")
+        if args.admin_cmd == "audit":
+            rows = ids.read_audit(conn, None, after=args.after, limit=args.limit)
+            return out(rows, "\n".join(f"{r['id']:>5} {r['ts'][11:19]} {r['actor']:<22} {r['action']:<18} {r['outcome']:<8} "
+                                        f"{r['workspace_id'] or '-':<20} {r['target'] or ''}" for r in rows) or "(no entries)")
+    return EXIT_USAGE
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -536,6 +589,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from patchquest.domain.identity import Role
+
     p = argparse.ArgumentParser(prog="patchquest", description="Local-first agentic coding harness")
     p.add_argument("--config", help="path to config.yaml (default: $PATCHQUEST_CONFIG or ./config.yaml)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -607,6 +662,28 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--probe", action="store_true", help="check which local serving engines are running")
     pr.add_argument("--url", help="probe one OpenAI-compatible base URL (e.g. http://localhost:30000/v1)")
     pr.add_argument("--api-key-env", help="env var holding the key for --url")
+    ad = sub.add_parser("admin", help="organisations, API tokens and the audit log")
+    asub = ad.add_subparsers(dest="admin_cmd", required=True)
+    as_json = argparse.ArgumentParser(add_help=False)
+    as_json.add_argument("--json", action="store_true")
+    ai = asub.add_parser("init", help="create an organisation, a workspace and an owner with a first token", parents=[as_json])
+    ai.add_argument("--org", required=True)
+    ai.add_argument("--workspace", required=True)
+    ai.add_argument("--owner", required=True)
+    at = asub.add_parser("token", help="manage API tokens")
+    tsub = at.add_subparsers(dest="op", required=True)
+    tc = tsub.add_parser("create", help="issue a token (creates the principal if needed)", parents=[as_json])
+    tc.add_argument("--workspace", required=True, help="workspace id")
+    tc.add_argument("--principal", required=True, help="person or service name")
+    tc.add_argument("--role", choices=[r.value for r in Role], default="DEVELOPER")
+    tc.add_argument("--label")
+    tc.add_argument("--expires-days", type=float)
+    tr = tsub.add_parser("revoke", help="revoke a token", parents=[as_json])
+    tr.add_argument("token_id")
+    tsub.add_parser("list", help="list tokens (never their secrets)", parents=[as_json])
+    aa = asub.add_parser("audit", help="the security audit log", parents=[as_json])
+    aa.add_argument("--after", type=int, default=0)
+    aa.add_argument("--limit", type=int, default=200)
     en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
@@ -646,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

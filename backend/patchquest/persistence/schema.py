@@ -103,6 +103,40 @@ def _approvals(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE approvals SET status = 'denied' WHERE status = 'rejected'")
 
 
+def _identity(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
+            created_at TEXT NOT NULL, UNIQUE (org_id, name));
+        CREATE TABLE IF NOT EXISTS principals (
+            id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+            kind TEXT NOT NULL CHECK (kind IN ('user', 'service')), name TEXT NOT NULL,
+            disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS memberships (
+            principal_id TEXT NOT NULL REFERENCES principals(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            role TEXT NOT NULL, PRIMARY KEY (principal_id, workspace_id));
+        CREATE TABLE IF NOT EXISTS api_tokens (
+            id TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES principals(id), token_hash TEXT NOT NULL UNIQUE,
+            prefix TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL, expires_at TEXT, revoked_at TEXT, last_used_at TEXT);
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, org_id TEXT, workspace_id TEXT, actor TEXT NOT NULL,
+            action TEXT NOT NULL, target TEXT, outcome TEXT NOT NULL, detail_json TEXT, remote TEXT);
+        CREATE INDEX IF NOT EXISTS idx_audit_ws ON audit_log(workspace_id, id);
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+    """)
+    add_columns(conn, "runs", {"workspace_id": "TEXT NOT NULL DEFAULT 'ws_local'", "created_by": "TEXT"})
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at)")
+    # Single-user local mode lives in one implicit organisation and workspace; existing runs belong to it.
+    now = "datetime('now')"
+    conn.execute(f"INSERT OR IGNORE INTO organizations (id, name, created_at) VALUES ('org_local', 'Local', {now})")
+    conn.execute("INSERT OR IGNORE INTO workspaces (id, org_id, name, created_at) "
+                 f"VALUES ('ws_local', 'org_local', 'Local', {now})")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -110,4 +144,5 @@ MIGRATIONS = [
     Migration(4, "run failure kind", _failure_kind),
     Migration(5, "run lineage and per-run overrides", _lineage),
     Migration(6, "approval decisions, expiry and grants", _approvals),
+    Migration(7, "organisations, workspaces, principals, tokens and audit log", _identity),
 ]

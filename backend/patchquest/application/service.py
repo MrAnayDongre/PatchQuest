@@ -18,6 +18,7 @@ from patchquest.agents.providers_recorded import RecordedProvider, session_name
 from patchquest.config import validate_overrides
 from patchquest.database import get_db, insert_event, now_iso
 from patchquest.domain.approvals import Decision
+from patchquest.domain.identity import LOCAL_WORKSPACE_ID
 from patchquest.domain.runs import RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
@@ -93,6 +94,8 @@ class TaskService:
         allow_network: bool = False,
         dry_run: bool = False,
         base_url: str | None = None,
+        workspace_id: str = LOCAL_WORKSPACE_ID,
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path."""
         repo_path = validate_repo_path(repo_path)
@@ -102,12 +105,13 @@ class TaskService:
         with get_db() as conn:
             conn.execute(
                 """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile,
-                   memory_mode, runtime_mode, allow_network, dry_run, base_url, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   memory_mode, runtime_mode, allow_network, dry_run, base_url, created_at, updated_at,
+                   workspace_id, created_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (run_id, repo_path, task, "created", provider, model, model_profile, memory_mode,
-                 runtime_mode, int(allow_network), int(dry_run), base_url, now, now),
+                 runtime_mode, int(allow_network), int(dry_run), base_url, now, now, workspace_id, created_by),
             )
-            insert_event(conn, run_id, "run_created", message=f"Run created: {task[:100]}")
+            insert_event(conn, run_id, "run_created", message=f"Run created: {task[:100]}", actor=created_by or "runtime")
         return self.get_run(run_id)
 
     def _machine_for(self, run: dict[str, Any]) -> RunStateMachine:
@@ -334,9 +338,14 @@ class TaskService:
             raise RunNotFound(run_id)
         return _row(r)
 
-    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_runs(self, limit: int = 50, workspace_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        """Newest first. ``workspace_ids`` restricts to those workspaces (None: all; [] : none)."""
+        sql, params = "SELECT * FROM runs", []
+        if workspace_ids is not None:
+            sql += f" WHERE workspace_id IN ({','.join('?' * len(workspace_ids)) or 'NULL'})"
+            params = list(workspace_ids)
         with get_db() as conn:
-            rows = conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", [*params, limit]).fetchall()
         return [_row(r) for r in rows]
 
     def events(self, run_id: str, after_id: int = 0) -> list[dict[str, Any]]:

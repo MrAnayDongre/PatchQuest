@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from patchquest.api.auth import require
 from patchquest.api.schemas import ProviderInfo, ProviderStatus, ProviderTestRequest
+from patchquest.domain.identity import Permission
 from patchquest.providers.catalog import PROVIDER_CATALOG
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
@@ -47,7 +49,7 @@ async def provider_status() -> list[ProviderStatus]:
     return results
 
 
-@router.post("/test", response_model=ProviderStatus)
+@router.post("/test", response_model=ProviderStatus, dependencies=[Depends(require(Permission.SETTINGS_WRITE))])
 async def test_provider(req: ProviderTestRequest) -> ProviderStatus:
     from patchquest.agents.provider_base import ModelConfig
     from patchquest.agents.provider_registry import get_provider

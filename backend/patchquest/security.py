@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import secrets
 from pathlib import Path
-
-from fastapi import HTTPException, Request
 
 from patchquest.config import get_config
 from patchquest.paths import FORBIDDEN_PREFIXES, _is_within
@@ -44,35 +41,28 @@ def configured_token() -> str | None:
     return value or None
 
 
+def _database_has_tokens() -> bool:
+    from patchquest.database import get_db
+    from patchquest.persistence.identity import has_tokens
+
+    try:
+        with get_db() as conn:
+            return has_tokens(conn)
+    except Exception:  # the database is not initialised yet: no tokens can exist
+        return False
+
+
 def check_startup_policy(host: str) -> None:
-    """Refuse to listen on a non-loopback interface unless a token protects the API."""
-    if not is_loopback(host) and not configured_token():
+    """Refuse to listen on a non-loopback interface unless some token protects the API."""
+    if not is_loopback(host) and not configured_token() and not _database_has_tokens():
         raise RuntimeError(
             f"Refusing to listen on {host!r} without authentication. Set {get_config().api_token_env} "
-            "to a long random value, or bind to 127.0.0.1."
+            "to a long random value, create an API token (`patchquest admin init`), or bind to 127.0.0.1."
         )
 
 
 def allowed_hosts() -> list[str]:
     return sorted(LOOPBACK_HOSTS | set(get_config().allowed_hosts))
-
-
-async def require_auth(request: Request) -> None:
-    """FastAPI dependency enforcing the bearer token when one is configured."""
-    if request.url.path in EXEMPT_PATHS or request.method == "OPTIONS":
-        return
-    expected = configured_token()
-    if expected is None:
-        return
-    supplied = ""
-    header = request.headers.get("authorization", "")
-    if header.lower().startswith("bearer "):
-        supplied = header[7:].strip()
-    elif request.url.path.endswith("/events/stream") or request.url.path.endswith("/stream"):
-        supplied = request.query_params.get("token", "")
-    if not supplied or not secrets.compare_digest(supplied.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Missing or invalid API token",
-                            headers={"WWW-Authenticate": "Bearer"})
 
 
 class RepoPathError(ValueError):

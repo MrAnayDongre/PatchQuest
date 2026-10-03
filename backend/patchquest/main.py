@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from patchquest.api.auth import authenticate_request, local_scope, require
 from patchquest.api.routes_calendar import router as calendar_router
 from patchquest.api.routes_memory import router as memory_router
 from patchquest.api.routes_providers import router as providers_router
@@ -21,16 +22,17 @@ from patchquest.api.routes_settings import router as settings_router
 from patchquest.api.schemas import HealthResponse
 from patchquest.config import get_config
 from patchquest.database import init_db
+from patchquest.domain.identity import Permission
 from patchquest.logging_config import setup_logging
 from patchquest.recovery import recover_interrupted_runs
-from patchquest.security import allowed_hosts, check_startup_policy, require_auth
+from patchquest.security import allowed_hosts, check_startup_policy
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    check_startup_policy(get_config().host)
     init_db()
+    check_startup_policy(get_config().host)  # after init: database-held tokens count as authentication
     recover_interrupted_runs()
 
     from patchquest.scheduler.scheduler_loop import start_scheduler_loop, stop_scheduler_loop
@@ -46,7 +48,7 @@ app = FastAPI(
     description="Local-first coding-agent harness for tiny/SLM models",
     version="0.1.0",
     lifespan=lifespan,
-    dependencies=[Depends(require_auth)],
+    dependencies=[Depends(authenticate_request)],
 )
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
@@ -60,15 +62,21 @@ app.add_middleware(
 )
 
 app.include_router(runs_router)
-app.include_router(providers_router)
-app.include_router(settings_router)
-app.include_router(memory_router)
-app.include_router(repo_router)
 app.include_router(reports_router)
-app.include_router(runtime_router)
-app.include_router(scheduler_router)
-app.include_router(search_router)
-app.include_router(calendar_router)
+# The provider catalogue and health are global and read-only; the outbound test needs a write permission.
+app.include_router(providers_router, dependencies=[Depends(require(Permission.RUN_READ))])
+# These features keep global (not per-workspace) data. Until they are tenant-scoped they work only while a
+# single workspace exists, and then by permission.
+for _router, _read, _write in (
+    (settings_router, Permission.SETTINGS_READ, Permission.SETTINGS_WRITE),
+    (memory_router, Permission.RUN_READ, Permission.SETTINGS_WRITE),
+    (repo_router, Permission.RUN_READ, Permission.SETTINGS_WRITE),
+    (runtime_router, Permission.RUN_READ, Permission.SETTINGS_WRITE),
+    (scheduler_router, Permission.RUN_READ, Permission.RUN_CREATE),
+    (search_router, Permission.RUN_READ, Permission.SETTINGS_WRITE),
+    (calendar_router, Permission.RUN_READ, Permission.RUN_CREATE),
+):
+    app.include_router(_router, dependencies=[Depends(local_scope(_read, _write))])
 
 
 @app.get("/api/health", response_model=HealthResponse)

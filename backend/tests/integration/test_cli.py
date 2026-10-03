@@ -250,3 +250,42 @@ class TestReplayForkCommands:
         assert cli.main(["--config", cfg, "fork", run_id, "--set", "nonsense"]) == cli.EXIT_USAGE
         assert cli.main(["--config", cfg, "fork", "missing"]) == cli.EXIT_USAGE
         assert cli.main(["--config", cfg, "replay", "missing"]) == cli.EXIT_USAGE
+
+
+class TestAdminCommands:
+    def test_init_issues_a_working_owner_token_and_audits_it(self, env, capsys):
+        import asyncio
+
+        import httpx
+
+        from patchquest.main import app
+
+        cfg, repo = env
+        assert cli.main(["--config", cfg, "admin", "init", "--org", "Acme", "--workspace", "core", "--owner", "ana", "--json"]) == cli.EXIT_OK
+        made = json.loads(capsys.readouterr().out)
+        assert made["token"].startswith("pq_")
+
+        async def call(headers):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost", headers=headers) as c:
+                return (await c.get("/api/runs")).status_code
+
+        assert asyncio.run(call({})) == 401  # tokens now exist, so anonymous access ends
+        assert asyncio.run(call({"Authorization": f"Bearer {made['token']}"})) == 200
+        assert cli.main(["--config", cfg, "admin", "audit", "--json"]) == cli.EXIT_OK
+        assert any(e["action"] == "org.init" for e in json.loads(capsys.readouterr().out))
+
+    def test_create_list_and_revoke_tokens(self, env, capsys):
+        cfg, _ = env
+        cli.main(["--config", cfg, "admin", "init", "--org", "Acme", "--workspace", "core", "--owner", "ana", "--json"])
+        ws = json.loads(capsys.readouterr().out)["workspace_id"]
+        assert cli.main(["--config", cfg, "admin", "token", "create", "--workspace", ws, "--principal", "ci-bot",
+                         "--role", "SERVICE", "--label", "pipeline", "--json"]) == cli.EXIT_OK
+        made = json.loads(capsys.readouterr().out)
+        assert cli.main(["--config", cfg, "admin", "token", "list", "--json"]) == cli.EXIT_OK
+        listed = json.loads(capsys.readouterr().out)
+        assert {t["principal"] for t in listed} == {"ana", "ci-bot"} and made["token"] not in json.dumps(listed)
+        assert cli.main(["--config", cfg, "admin", "token", "revoke", made["token_id"]]) == cli.EXIT_OK
+        assert cli.main(["--config", cfg, "admin", "token", "revoke", "tok_nope"]) == cli.EXIT_USAGE
+        capsys.readouterr()
+        cli.main(["--config", cfg, "admin", "token", "list", "--json"])
+        assert next(t for t in json.loads(capsys.readouterr().out) if t["id"] == made["token_id"])["revoked_at"]

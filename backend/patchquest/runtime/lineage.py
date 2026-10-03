@@ -35,12 +35,13 @@ def create_child(
     conn.execute(
         """INSERT INTO runs (id, repo_path, task, status, provider, model, model_profile, memory_mode, runtime_mode,
                allow_network, dry_run, base_url, created_at, updated_at, parent_run_id, parent_checkpoint_seq,
-               lineage_kind, replay_mode, overrides_json)
-           VALUES (?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               lineage_kind, replay_mode, overrides_json, workspace_id, created_by)
+           VALUES (?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (child_id, parent["repo_path"], parent["task"], provider or parent["provider"], model or parent["model"],
          parent["model_profile"], parent["memory_mode"], parent["runtime_mode"], parent["allow_network"], parent["dry_run"],
          base_url if base_url is not None else parent["base_url"], now, now, parent_id,
-         parent_cp.seq if parent_cp else None, kind, replay_mode, json.dumps(merged) if merged else None))
+         parent_cp.seq if parent_cp else None, kind, replay_mode, json.dumps(merged) if merged else None,
+         parent["workspace_id"], actor))
     ledger.append(conn, child_id, "run_created", message=f"{kind.capitalize()} of run {parent_id[:8]}", actor=actor)
     ledger.append(conn, child_id, f"{kind}_created", actor=actor, message=f"Started from run {parent_id}",
                   payload={"parent_run_id": parent_id, "parent_checkpoint_seq": parent_cp.seq if parent_cp else None,
