@@ -15,9 +15,9 @@ import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -120,6 +120,7 @@ class ActionResult:
     external_id: str
     url: str | None = None
     created: bool = True  # False: reconciliation found the object from an earlier attempt
+    data: Mapping[str, Any] = field(default_factory=dict)  # what a read action fetched: third-party text, i.e. untrusted
 
 
 def check_grant(spec: ActionSpec, key: str, grant: ApprovalGrant | None, now: datetime) -> None:
@@ -146,6 +147,20 @@ class Connector(ABC):
     @abstractmethod
     def verify(self, headers: Mapping[str, str], body: bytes) -> SignatureStatus: ...
 
+    def health(self) -> str:
+        """A read-only call proving the credentials work. Returns a short description; raises on failure. Connectors with
+        nothing to call return a description of what was validated instead."""
+        return "configuration is valid; there is nothing to call"
+
+    def check(self, action: Action) -> None:  # noqa: B027 - an optional hook, not an abstract method
+        """Refuse an action this integration must never perform (a channel, project, page or endpoint it was not
+        configured for). Runs before any request is made - reconciliation included - and after the approval check."""
+
+    def handshake(self, headers: Mapping[str, str], body: bytes) -> dict[str, Any] | None:
+        """A provider's endpoint-verification request (for example Slack's ``url_verification``), answered before any
+        event handling. Called only after the signature verified. Return the JSON to reply with, or None."""
+        return None
+
     @abstractmethod
     def find_existing(self, idempotency_key: str) -> ActionResult | None:
         """Reconciliation after a crash: has an earlier attempt already created the external object?"""
@@ -159,6 +174,7 @@ class Connector(ABC):
             raise ValueError("idempotency_key must be 1-128 characters of [A-Za-z0-9._:-]")
         if spec.requires_approval:
             check_grant(spec, idempotency_key, grant, self._clock())
+        self.check(action)
         if spec.side_effect not in SAFE_EFFECTS:
             existing = self.find_existing(idempotency_key)
             if existing is not None:

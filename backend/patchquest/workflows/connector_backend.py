@@ -43,7 +43,11 @@ class ConnectorBackend:
                                   f"invalid parameters for {name}: {'.'.join(str(p) for p in first['loc'])}: {first['msg']}") from None
         grant = ApprovalGrant(short, idempotency_key, approved_by, utc_now() + GRANT_TTL) if approved_by else None
         result = await asyncio.to_thread(self._connector.perform, action, idempotency_key=idempotency_key, grant=grant)
-        return {"id": result.external_id, "url": result.url, "created": result.created}
+        out: dict[str, Any] = {"id": result.external_id, "url": result.url, "created": result.created}
+        if result.data:
+            out["data"] = dict(result.data)  # untrusted third-party content: workflows treat it as data, never instructions
+            out["untrusted"] = True
+        return out
 
     async def find_existing(self, name: str, idempotency_key: str) -> dict[str, Any] | None:
         self._short(name)

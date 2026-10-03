@@ -132,6 +132,27 @@ def check_database() -> Check:
     return Check("database", OK, f"{path} (journal={mode})")
 
 
+def check_secrets() -> Check | None:
+    """Stored secrets are unreadable without the key: say so before a webhook or action fails mysteriously."""
+    from patchquest import secrets_store
+    from patchquest.database import database_exists, get_db
+    from patchquest.persistence.migrations import table_exists
+
+    if not database_exists():
+        return None
+    try:
+        with get_db() as conn:
+            stored = conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0] if table_exists(conn, "secrets") else 0
+    except Exception:
+        return None
+    if stored and not secrets_store.available():
+        return Check("secrets", FAIL, f"{stored} stored secret(s) but {secrets_store.KEY_ENV} is not set (or 'cryptography' is missing)",
+                     f"Set {secrets_store.KEY_ENV} to the key they were stored with", "integrations that use them will fail")
+    if stored:
+        return Check("secrets", OK, f"{stored} stored secret(s) encrypted; key present")
+    return Check("secrets", INFO, "no stored secrets" + ("" if secrets_store.available() else f"; set {secrets_store.KEY_ENV} to store them"))
+
+
 def check_workspace_dir() -> Check:
     from patchquest.runtime.workspace import WORKSPACE_BASE
 
@@ -341,7 +362,7 @@ ALL_CHECKS: list[Callable[[], Check | list[Check]]] = [
     check_python, check_dependencies, check_tree_sitter, check_config, check_database, check_workspace_dir,
     lambda: _tool("git", ["--version"], "Install git", FAIL),
     lambda: _tool("node", ["--version"], "Install Node 18+ to build the dashboard"),
-    check_schema, check_state_permissions, check_git_hardening, check_queue_and_runs, check_engines,
+    check_schema, lambda: check_secrets() or [], check_state_permissions, check_git_hardening, check_queue_and_runs, check_engines,
     check_docker, check_executor_isolation, check_patch_engine, check_providers,
 ]
 

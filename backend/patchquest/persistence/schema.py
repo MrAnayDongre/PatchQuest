@@ -247,6 +247,20 @@ def _tenancy(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _integrations(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS integrations (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), kind TEXT NOT NULL, name TEXT NOT NULL,
+            config_json TEXT NOT NULL, secret_refs_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'connected',
+            created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_checked_at TEXT, last_error TEXT,
+            UNIQUE (workspace_id, name), UNIQUE (workspace_id, kind));
+        CREATE TABLE IF NOT EXISTS secrets (
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id), owner_id TEXT NOT NULL, name TEXT NOT NULL,
+            ciphertext TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, rotated_at TEXT, last_used_at TEXT,
+            PRIMARY KEY (workspace_id, owner_id, name));
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -262,4 +276,5 @@ MIGRATIONS = [
     Migration(12, "plugin state and events", _plugins),
     Migration(13, "scoped, provenance-aware memories", _memories),
     Migration(14, "teams, projects and tenant-owned repositories", _tenancy),
+    Migration(15, "integrations and encrypted secrets", _integrations),
 ]

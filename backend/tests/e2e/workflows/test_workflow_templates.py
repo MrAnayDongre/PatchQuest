@@ -56,7 +56,7 @@ def config():
 
 def test_the_catalogue_has_no_surprises():
     assert ACTIONS["notify.log"].side_effect.value == "PURE"
-    assert all(a.side_effect.value == "EXTERNAL_WRITE" for n, a in ACTIONS.items() if n != "notify.log")
+    assert all(a.side_effect.value == "EXTERNAL_WRITE" for n, a in ACTIONS.items() if n not in ("notify.log", "notion.read_page"))  # the one read-only connector action needs no approval
 
 
 @pytest.mark.parametrize("name", sorted(TEMPLATES))
@@ -132,7 +132,7 @@ async def test_an_unconnected_connector_fails_the_step_clearly_instead_of_preten
     await waiting_at(engine, run_id, "review")
     await engine.decide(run_id, "review", "approve", "user:ana")
     run = await settle(engine, run_id, "failed")
-    assert "could not be reached" in run["error"] and step(run_id, "propose")["status"] == "failed"
+    assert "no github connector is connected" in run["error"] and step(run_id, "propose")["status"] == "failed"
 
 
 def test_templates_say_which_connectors_they_need():

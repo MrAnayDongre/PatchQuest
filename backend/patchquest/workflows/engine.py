@@ -31,7 +31,7 @@ from patchquest import database
 from patchquest.application.service import TaskService
 from patchquest.config import validate_overrides
 from patchquest.database import get_db
-from patchquest.domain.failures import Origin, classify
+from patchquest.domain.failures import Origin, PatchQuestError, classify
 from patchquest.domain.policy import Result
 from patchquest.domain.workflows import (
     REQUIRES_APPROVAL_EFFECTS,
@@ -53,6 +53,7 @@ from patchquest.runtime import policy as policy_runtime
 from patchquest.runtime import run_memory
 from patchquest.runtime.retry import run_with_retry
 from patchquest.workflows import store
+from patchquest.workflows.catalog import acting_in
 
 ACTIVE_STEP = ("pending", "running", "waiting")
 TERMINAL_RUN = ("completed", "failed", "cancelled")
@@ -584,7 +585,8 @@ class WorkflowEngine:
             self._step_failed(run, wf, node, step, f"'{name}' ({info.side_effect.value}) needs a human approval first")
             return True
         if step["status"] == "running":  # crashed while performing: did it happen?
-            existing = await self.actions.find_existing(name, key)
+            with acting_in(run["workspace_id"]):
+                existing = await self.actions.find_existing(name, key)
             if existing is not None:
                 self._succeed(run["id"], step["id"], existing, node.id)
                 with get_db() as conn:
@@ -603,13 +605,16 @@ class WorkflowEngine:
             store.event(conn, run["id"], "step_started", node_id=node.id, message=name)
 
         async def perform() -> dict[str, Any]:
-            return await self.actions.perform(name, params, idempotency_key=key, approved_by=approver)
+            with acting_in(run["workspace_id"]):
+                return await self.actions.perform(name, params, idempotency_key=key, approved_by=approver)
 
         try:
             output = await run_with_retry(perform, origin=Origin.CONNECTOR, idempotent=info.idempotent)
         except Exception as exc:
             failure = classify(exc, origin=Origin.CONNECTOR)
-            self._step_failed(run, wf, node, step, f"{failure.spec.message} ({failure.kind.value})", {"failure": failure.to_payload()})
+            # Errors raised by PatchQuest itself carry a message written for people; third-party errors get the generic one.
+            said = exc.detail if isinstance(exc, PatchQuestError) else failure.spec.message
+            self._step_failed(run, wf, node, step, f"{said} ({failure.kind.value})", {"failure": failure.to_payload()})
             return True
         self._succeed(run["id"], step["id"], output, node.id)
         with get_db() as conn:

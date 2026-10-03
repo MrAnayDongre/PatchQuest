@@ -35,6 +35,7 @@ class Permission(StrEnum):
     TOKENS_MANAGE = "tokens.manage"
     AUDIT_READ = "audit.read"
     REPOSITORY_MANAGE = "repository.manage"  # register repositories; create and arrange projects
+    CONNECTOR_MANAGE = "connector.manage"  # connect, reconfigure, test and remove integrations and their secrets
     ORG_MANAGE = "org.manage"  # organisation-wide settings: held by owners only
 
 

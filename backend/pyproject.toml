@@ -35,6 +35,7 @@ tree-sitter = [
 ]
 server = [
     "psycopg[binary,pool]>=3.2,<4",
+    "cryptography>=42",
 ]
 caldav = [
     "caldav>=1.3.0",

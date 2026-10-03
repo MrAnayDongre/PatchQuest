@@ -456,7 +456,7 @@ class TestActions:
         actions.error = PatchQuestError(FailureKind.CONNECTOR_AUTH, "token rejected")
         run_id = await self.approved(engine, raw)
         run = await settle(engine, run_id, "failed")
-        assert "credentials were rejected" in run["error"]
+        assert "token rejected" in run["error"] and "CONNECTOR_AUTH" in run["error"]
 
     @pytest.mark.asyncio
     async def test_transient_connector_errors_are_retried_centrally(self, engine, actions):

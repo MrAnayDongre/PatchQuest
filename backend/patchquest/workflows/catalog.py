@@ -8,6 +8,9 @@ step with a clear, typed reason (``CONNECTOR_UNAVAILABLE``) instead of pretendin
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from patchquest.domain.effects import SideEffect
@@ -20,8 +23,23 @@ ACTIONS: dict[str, ActionInfo] = {
     "github.add_label": ActionInfo(SideEffect.EXTERNAL_WRITE),
     "github.create_pull_request": ActionInfo(SideEffect.EXTERNAL_WRITE),
     "slack.post_message": ActionInfo(SideEffect.EXTERNAL_WRITE),
+    "linear.comment": ActionInfo(SideEffect.EXTERNAL_WRITE),
+    "jira.comment": ActionInfo(SideEffect.EXTERNAL_WRITE),
+    "notion.read_page": ActionInfo(SideEffect.NETWORK_READ),  # a read: needs no approval; its text is untrusted data
     "webhook.post": ActionInfo(SideEffect.EXTERNAL_WRITE, idempotent=False),
 }
+
+# The workspace whose integrations an action runs against; set by the engine around each call.
+ACTING_WORKSPACE: ContextVar[str | None] = ContextVar("patchquest_acting_workspace", default=None)
+
+
+@contextmanager
+def acting_in(workspace_id: str) -> Iterator[None]:
+    token = ACTING_WORKSPACE.set(workspace_id)
+    try:
+        yield
+    finally:
+        ACTING_WORKSPACE.reset(token)
 
 
 class LocalActions:
@@ -43,6 +61,11 @@ class LocalActions:
     def _backend(self, name: str) -> Any:
         connector = name.split(".", 1)[0]
         backend = self._backends.get(connector)
+        workspace = ACTING_WORKSPACE.get()
+        if backend is None and workspace is not None:
+            from patchquest.integrations.service import backend_for
+
+            backend = backend_for(workspace, connector)  # the workspace's own configured, credentialed integration
         if backend is None:
             raise PatchQuestError(FailureKind.CONNECTOR_UNAVAILABLE, f"no {connector} connector is connected for '{name}'")
         return backend
@@ -60,5 +83,8 @@ class LocalActions:
     async def find_existing(self, name: str, idempotency_key: str) -> dict[str, Any] | None:
         if name == "notify.log" or name.startswith("plugin."):
             return None  # a plugin call has no external record to reconcile: non-idempotent ones become 'uncertain'
-        backend = self._backends.get(name.split(".", 1)[0])
-        return None if backend is None else await backend.find_existing(name, idempotency_key)
+        try:
+            backend = self._backend(name)
+        except PatchQuestError:
+            return None
+        return await backend.find_existing(name, idempotency_key)

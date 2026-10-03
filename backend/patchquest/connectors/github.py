@@ -204,6 +204,10 @@ class GitHubConnector(Connector):
             raise PatchQuestError(FailureKind.CONNECTOR_UNAVAILABLE, "unexpected GitHub response shape") from None
         raise ValueError(f"unsupported action {type(action).__name__}")
 
+    def health(self) -> str:
+        data = self._call("GET", f"/repos/{self.repo}")
+        return f"can read {data.get('full_name', self.repo)}"
+
     def find_existing(self, idempotency_key: str) -> ActionResult | None:
         tag = marker(idempotency_key)
         found = self._call("GET", "/search/issues", params={"q": f'"{MARKER_PREFIX}{idempotency_key}" repo:{self.repo}'})

@@ -8,17 +8,19 @@ A connector links PatchQuest to an outside system. **Triggers** (events coming i
 | Piece | Status |
 |---|---|
 | HMAC verification, replay window, dedup, size limit, SSRF guard, retry/dead-letter, grants | Unit/integration tested, no network needed |
-| GitHub connector (`github.py`) | **MOCKED_PROTOCOL only.** Tested against `testing/mock_server.py`, our reading of GitHub's public docs. **Never run against live GitHub / GHE.** |
-| Slack | Only the signature scheme and a delivery builder exist (no connector). Not verified live. |
+| GitHub, Slack, Linear, Jira Cloud, Notion (read only), generic webhook connectors | **MOCKED_PROTOCOL only.** Each is tested against a simulator in `testing/mock_server.py` that encodes our reading of the provider's public docs (signatures, payload shapes, error conventions such as Slack's HTTP 200 + `ok:false`). **None has been run against the live service.** |
+| Per-workspace integrations, encrypted secrets, `/hooks/<id>` ingress, engine wiring | Tested end to end with the simulators (see [integrations](integrations.md)) |
 
 Tests that rely on a simulator carry `pytestmark = pytest.mark.mocked_protocol` and say so in their docstring.
+Live verification needs real credentials; the recipe is in [integrations](integrations.md#going-live).
 
 ## Contract
 
 - `ConnectorSpec`: name, version, trigger types, `ActionSpec`s (name, `SideEffect`, `requires_approval`), required scopes.
 - `requires_approval` defaults to `True`; it can only be `False` for `PURE`/`READ_ONLY`/`NETWORK_READ`. Writes and `UNKNOWN` can never waive it.
 - `Connector.perform(action, *, idempotency_key, grant)` is a template method: it checks the `ApprovalGrant`
-  (matching action and key, approver set, tz-aware and unexpired), then calls `find_existing(key)` for
+  (matching action and key, approver set, tz-aware and unexpired), then `check(action)` (the integration's own limits:
+  allowed channels, project, pages, endpoints - before any request is made), then calls `find_existing(key)` for
   side-effecting actions (crash reconciliation), then `_execute`. Connectors implement `_execute`, so they cannot skip the check.
 - Actions are frozen, `extra=forbid` pydantic models, never free-form strings.
 - `normalize(raw, headers) -> EventEnvelope` (frozen, JSON round-trip, payload <= 256 KiB). `verify` returns a `SignatureStatus`.
