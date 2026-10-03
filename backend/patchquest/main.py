@@ -27,6 +27,7 @@ from patchquest.api.routes_runtime import router as runtime_router
 from patchquest.api.routes_scheduler import router as scheduler_router
 from patchquest.api.routes_search import router as search_router
 from patchquest.api.routes_settings import router as settings_router
+from patchquest.api.routes_tenancy import router as tenancy_router
 from patchquest.api.routes_workflows import router as workflows_router
 from patchquest.api.schemas import HealthResponse
 from patchquest.config import get_config
@@ -80,6 +81,7 @@ app.include_router(metrics_router)
 app.include_router(workflows_router)
 app.include_router(policies_router)
 app.include_router(knowledge_router)
+app.include_router(tenancy_router)
 # The provider catalogue and health are global and read-only; the outbound test needs a write permission.
 app.include_router(providers_router, dependencies=[Depends(require(Permission.RUN_READ))])
 # These features keep global (not per-workspace) data. Until they are tenant-scoped they work only while a

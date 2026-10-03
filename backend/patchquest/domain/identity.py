@@ -34,12 +34,14 @@ class Permission(StrEnum):
     MEMBERS_MANAGE = "members.manage"
     TOKENS_MANAGE = "tokens.manage"
     AUDIT_READ = "audit.read"
+    REPOSITORY_MANAGE = "repository.manage"  # register repositories; create and arrange projects
+    ORG_MANAGE = "org.manage"  # organisation-wide settings: held by owners only
 
 
 _ALL = frozenset(Permission)
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.OWNER: _ALL,
-    Role.ADMIN: _ALL,  # differs from OWNER only in who may grant OWNER (see ``may_grant``)
+    Role.ADMIN: _ALL - {Permission.ORG_MANAGE},  # everything inside a workspace; not organisation-wide settings
     Role.DEVELOPER: frozenset({Permission.RUN_READ, Permission.RUN_CREATE, Permission.RUN_CONTROL,
                                Permission.APPROVAL_DECIDE, Permission.SETTINGS_READ, Permission.WORKFLOW_MANAGE}),
     Role.OPERATOR: frozenset({Permission.RUN_READ, Permission.RUN_CONTROL, Permission.APPROVAL_DECIDE,

@@ -81,8 +81,16 @@ def load_principal(conn: sqlite3.Connection, principal_id: str) -> Principal | N
     row = conn.execute("SELECT id, org_id, kind, name FROM principals WHERE id = ? AND disabled = 0", (principal_id,)).fetchone()
     if row is None:
         return None
-    roles = {m["workspace_id"]: Role(m["role"]) for m in conn.execute(
+    direct = {m["workspace_id"]: Role(m["role"]) for m in conn.execute(
         "SELECT workspace_id, role FROM memberships WHERE principal_id = ?", (principal_id,))}
+    from patchquest.persistence import tenancy
+
+    via_teams = tenancy.team_roles_for(conn, principal_id)
+    roles = {}
+    for ws in direct.keys() | via_teams.keys():
+        best = tenancy.effective_role(direct.get(ws), via_teams.get(ws, []))
+        if best is not None:
+            roles[ws] = best
     return Principal(row["id"], row["kind"], row["name"], row["org_id"], roles)
 
 

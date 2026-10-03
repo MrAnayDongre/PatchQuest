@@ -146,6 +146,7 @@ async def test_api_is_scoped_to_the_callers_workspaces(tmp_path):
     from patchquest.domain.identity import Role
     from patchquest.main import app
     from patchquest.persistence import identity as ids
+    from patchquest.persistence import tenancy
 
     with get_db() as conn:
         org = ids.create_org(conn, "Acme")
@@ -153,11 +154,14 @@ async def test_api_is_scoped_to_the_callers_workspaces(tmp_path):
         p = ids.create_principal(conn, org, "ana")
         ids.set_role(conn, p, a, Role.VIEWER)
         _, token = ids.issue_token(conn, p)
-    repo = make_calc_repo(tmp_path / "r")
+    repo_a, repo_b = make_calc_repo(tmp_path / "ra"), make_calc_repo(tmp_path / "rb")
+    with get_db() as conn:
+        tenancy.register_repository(conn, a, str(repo_a), None, None, "test")
+        tenancy.register_repository(conn, b, str(repo_b), None, None, "test")
     svc = TaskService()
-    svc.create_run(repo_path=str(repo), task="t", workspace_id=a)
-    svc.create_run(repo_path=str(repo), task="t", workspace_id=b)
-    svc.create_run(repo_path=str(repo), task="t", workspace_id=b)
+    svc.create_run(repo_path=str(repo_a), task="t", workspace_id=a)
+    svc.create_run(repo_path=str(repo_b), task="t", workspace_id=b)
+    svc.create_run(repo_path=str(repo_b), task="t", workspace_id=b)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost",
                                  headers={"Authorization": f"Bearer {token}"}) as c:
         body = (await c.get("/api/metrics?window=1d")).json()

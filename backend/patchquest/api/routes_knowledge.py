@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from patchquest.api.auth import CurrentPrincipal, record
 from patchquest.database import get_db
 from patchquest.domain import preferences as prefs
-from patchquest.domain.identity import Permission, Principal, Role
+from patchquest.domain.identity import Permission, Principal
 from patchquest.domain.memory import ACTIVE_KINDS, MemoryKind, MemoryRefused, Source, Status, to_public
 from patchquest.domain.policy import PolicyError, Scope
 from patchquest.persistence import memories
@@ -72,7 +72,7 @@ def _may_write(request: Request, principal: Principal, workspace_id: str, scope:
     """Authorise writing at ``scope`` and return the owner and the (possibly implied) reference."""
     if scope is Scope.ORGANIZATION:
         owner = _owner(request, principal, workspace_id, Permission.SETTINGS_WRITE)
-        if principal.role_in(workspace_id) is not Role.OWNER:
+        if not principal.can(Permission.ORG_MANAGE, workspace_id):
             raise HTTPException(403, {"code": "forbidden", "message": "only an owner can write organisation-wide memory"})
         return owner, None
     if scope is Scope.WORKSPACE:

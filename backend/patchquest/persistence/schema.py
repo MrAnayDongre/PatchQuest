@@ -224,6 +224,29 @@ def _memories(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _tenancy(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS teams (
+            id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
+            created_at TEXT NOT NULL, UNIQUE (org_id, name));
+        CREATE TABLE IF NOT EXISTS team_members (
+            team_id TEXT NOT NULL REFERENCES teams(id), principal_id TEXT NOT NULL REFERENCES principals(id),
+            PRIMARY KEY (team_id, principal_id));
+        CREATE INDEX IF NOT EXISTS idx_team_members_principal ON team_members(principal_id);
+        CREATE TABLE IF NOT EXISTS team_roles (
+            team_id TEXT NOT NULL REFERENCES teams(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            role TEXT NOT NULL, PRIMARY KEY (team_id, workspace_id));
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
+            team_id TEXT REFERENCES teams(id), created_at TEXT NOT NULL, UNIQUE (workspace_id, name));
+        CREATE TABLE IF NOT EXISTS repositories (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), project_id TEXT REFERENCES projects(id),
+            name TEXT NOT NULL, path TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, archived_at TEXT);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_repositories_path ON repositories(path) WHERE archived_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_repositories_ws ON repositories(workspace_id, archived_at);
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -238,4 +261,5 @@ MIGRATIONS = [
     Migration(11, "scoped, versioned policies", _policies),
     Migration(12, "plugin state and events", _plugins),
     Migration(13, "scoped, provenance-aware memories", _memories),
+    Migration(14, "teams, projects and tenant-owned repositories", _tenancy),
 ]

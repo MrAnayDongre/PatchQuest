@@ -501,7 +501,7 @@ class WorkflowEngine:
                 child = self.service.create_run(
                     repo_path=str(cfg.get("repo") or ctx["vars"].get("repo", "")), task=str(cfg["task"]),
                     provider=cfg.get("provider") or "mock", model=cfg.get("model"), base_url=cfg.get("base_url"),
-                    workspace_id=run["workspace_id"], created_by=f"workflow:{key}")
+                    workspace_id=run["workspace_id"], created_by=f"workflow:{key}", acting_as=run.get("created_by"))
             except (ValueError, OSError) as exc:  # includes RepoPathError
                 self._step_failed(run, wf, node, step, f"could not start the agent: {exc}")
                 return True

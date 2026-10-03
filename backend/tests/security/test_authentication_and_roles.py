@@ -125,7 +125,7 @@ class TestRoles:
     @pytest.mark.asyncio
     async def test_decisions_and_runs_are_attributed_to_the_caller(self, world, tmp_path):
         async with world.client("dev_a") as c:
-            r = await c.post("/api/runs", json={"repo_path": str(tmp_path / "repo"), "task": "read only: explain the repo"})
+            r = await c.post("/api/runs", json={"repo_path": world.repos["a"], "task": "read only: explain the repo"})
         run_id = r.json()["id"]
         with get_db() as conn:
             row = conn.execute("SELECT created_by FROM runs WHERE id = ?", (run_id,)).fetchone()

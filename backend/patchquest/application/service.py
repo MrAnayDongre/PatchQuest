@@ -22,7 +22,7 @@ from patchquest.domain.identity import LOCAL_WORKSPACE_ID
 from patchquest.domain.runs import RunStatus
 from patchquest.orchestrator.event_bus import event_bus
 from patchquest.orchestrator.state_machine import RunStateMachine
-from patchquest.persistence import approvals, checkpoints, ledger
+from patchquest.persistence import approvals, checkpoints, ledger, tenancy
 from patchquest.persistence.runs import transition
 from patchquest.runtime import lineage, queue
 from patchquest.runtime import policy as policy_runtime
@@ -98,9 +98,14 @@ class TaskService:
         workspace_id: str = LOCAL_WORKSPACE_ID,
         created_by: str | None = None,
         overrides: dict[str, Any] | None = None,
+        acting_as: str | None = None,
     ) -> dict[str, Any]:
-        """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path."""
+        """Validate and persist a run in state ``created``. Raises RepoPathError on a bad path, and
+        RepositoryNotRegistered / ProjectAccessDenied when the workspace may not act on that repository.
+        ``acting_as`` names the person a workflow is running for, for the project-team check."""
         repo_path = validate_repo_path(repo_path)
+        with get_db() as conn:
+            tenancy.check_run_allowed(conn, workspace_id=workspace_id, repo_path=repo_path, actor=acting_as or created_by)
         base_url = validate_base_url(base_url)
         overrides = policy_runtime.clamp_overrides(
             validate_overrides(overrides) if overrides else None,

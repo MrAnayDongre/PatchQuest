@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from patchquest.api.auth import CurrentPrincipal, record
 from patchquest.database import get_db
 from patchquest.domain.effects import SideEffect
-from patchquest.domain.identity import Permission, Principal, Role
+from patchquest.domain.identity import Permission, Principal
 from patchquest.domain.policy import PolicyError, Scope
 from patchquest.persistence import policies
 from patchquest.runtime import policy as rt
@@ -65,7 +65,7 @@ async def put_policy(request: Request, principal: CurrentPrincipal, body: Policy
     try:
         scope = Scope.parse(str(body.document.get("scope", "")))
         if scope is Scope.ORGANIZATION:
-            if principal.role_in(body.workspace_id) is not Role.OWNER:
+            if not principal.can(Permission.ORG_MANAGE, body.workspace_id):
                 raise HTTPException(403, {"code": "forbidden", "message": "only an owner can set organisation-wide policy"})
             ref = _org_of(body.workspace_id)
         elif scope is Scope.WORKSPACE:
@@ -95,7 +95,7 @@ async def disable_policy(request: Request, principal: CurrentPrincipal, scope: s
     refs = {Scope.ORGANIZATION: _org_of(workspace_id), Scope.WORKSPACE: workspace_id, Scope.WORKFLOW: ref}
     if parsed not in refs or not refs[parsed]:
         raise HTTPException(404, "Not found")
-    if parsed is Scope.ORGANIZATION and principal.role_in(workspace_id) is not Role.OWNER:
+    if parsed is Scope.ORGANIZATION and not principal.can(Permission.ORG_MANAGE, workspace_id):
         raise HTTPException(403, {"code": "forbidden", "message": "only an owner can change organisation-wide policy"})
     with get_db() as conn:
         done = policies.disable(conn, parsed, str(refs[parsed]), name)

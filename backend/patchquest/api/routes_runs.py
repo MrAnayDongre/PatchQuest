@@ -29,6 +29,7 @@ from patchquest.config import get_config
 from patchquest.database import get_db
 from patchquest.domain.approvals import ApprovalError, Decision
 from patchquest.domain.identity import Permission
+from patchquest.domain.tenancy import ProjectAccessDenied, RepositoryNotRegistered
 from patchquest.persistence import checkpoints
 from patchquest.runtime.replay import NotReplayable, ReplayMode, StateReplay, comparison_payload
 from patchquest.runtime.resume import ConfirmationRequired, NotResumable
@@ -78,6 +79,9 @@ async def create_run(req: CreateRunRequest, request: Request, principal: Current
             memory_mode=req.memory_mode or "repo", allow_network=req.allow_network, dry_run=req.dry_run,
             base_url=req.base_url, workspace_id=workspace_id, created_by=principal.actor, overrides=req.overrides or None,
         )
+    except (RepositoryNotRegistered, ProjectAccessDenied) as exc:
+        record(request, principal, "access.denied", workspace_id, req.repo_path, outcome="denied", detail={"reason": type(exc).__name__})
+        raise HTTPException(403, {"code": "repository_not_allowed", "message": str(exc)}) from exc
     except (RepoPathError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     record(request, principal, "run.create", workspace_id, run["id"], detail={"provider": run["provider"], "model": run["model"]})

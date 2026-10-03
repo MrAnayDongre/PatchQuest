@@ -80,7 +80,7 @@ async def test_you_cannot_create_a_run_in_someone_elses_workspace(world, tmp_pat
 @pytest.mark.asyncio
 async def test_a_run_created_through_the_api_belongs_to_the_callers_workspace(world, tmp_path):
     async with world.client("dev_b") as c:
-        r = await c.post("/api/runs", json={"repo_path": str(tmp_path / "repo"), "task": "read only: explain the repo"})
+        r = await c.post("/api/runs", json={"repo_path": world.repos["b"], "task": "read only: explain the repo"})
     assert r.status_code == 200 and r.json()["workspace_id"] == world.ws["b"]
     async with world.client("owner_a") as c:
         assert (await c.get(f"/api/runs/{r.json()['id']}")).status_code == 404
