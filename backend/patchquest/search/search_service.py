@@ -48,9 +48,10 @@ def _store_cache(cache_key: str, query: str, provider: str, response: SearchResp
     expires = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
     with get_db() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO search_cache
-               (cache_key, query, provider, results_json, retrieved_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO search_cache (cache_key, query, provider, results_json, retrieved_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(cache_key) DO UPDATE SET query = excluded.query, provider = excluded.provider,
+                   results_json = excluded.results_json, retrieved_at = excluded.retrieved_at, expires_at = excluded.expires_at""",
             (cache_key, query, provider, response.model_dump_json(), now, expires),
         )
 
