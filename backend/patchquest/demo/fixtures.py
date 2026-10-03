@@ -121,6 +121,8 @@ ISSUE_WORKFLOW: dict[str, Any] = {
         {"id": "note", "type": "action", "config": {"action": "notify.log", "params": {"message": "Not validated: nothing was posted"}}},
         {"id": "done", "type": "end", "config": {}},
     ],
+    "layout": {"investigate": {"x": 0, "y": 0}, "validated": {"x": 240, "y": 0}, "review": {"x": 480, "y": 0}, "comment": {"x": 720, "y": 0},
+               "note": {"x": 240, "y": 160}, "done": {"x": 480, "y": 160}, "tell": {"x": 720, "y": 160}},
     "edges": [{"from": "investigate", "to": "validated"}, {"from": "validated", "to": "review", "when": "true"},
               {"from": "validated", "to": "note", "when": "false"}, {"from": "review", "to": "comment", "when": "approved"},
               {"from": "review", "to": "done", "when": "denied"}, {"from": "review", "to": "done", "when": "timeout"},
