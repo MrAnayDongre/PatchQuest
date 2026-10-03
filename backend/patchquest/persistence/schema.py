@@ -209,6 +209,21 @@ def _plugins(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _memories(conn: sqlite3.Connection) -> None:
+    run_script(conn, """
+        CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT NOT NULL,
+            org_id TEXT NOT NULL, workspace_id TEXT, key TEXT NOT NULL, value_json TEXT NOT NULL,
+            source TEXT NOT NULL, reason TEXT NOT NULL, authored_by TEXT NOT NULL, confidence REAL NOT NULL,
+            status TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            last_verified_at TEXT NOT NULL, expires_at TEXT, evidence_json TEXT, metadata_json TEXT,
+            supersedes TEXT, schema_version INTEGER NOT NULL DEFAULT 1);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_active ON memories(kind, scope, scope_id, org_id, COALESCE(workspace_id, ''), key)
+            WHERE status = 'active';
+        CREATE INDEX IF NOT EXISTS idx_memories_owner ON memories(org_id, workspace_id, scope, scope_id, status);
+    """)
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -222,4 +237,5 @@ MIGRATIONS = [
     Migration(10, "run queue and worker leases", _leases),
     Migration(11, "scoped, versioned policies", _policies),
     Migration(12, "plugin state and events", _plugins),
+    Migration(13, "scoped, provenance-aware memories", _memories),
 ]

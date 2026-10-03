@@ -49,6 +49,7 @@ from patchquest.domain.workflows import (
 from patchquest.persistence import identity as ids
 from patchquest.persistence.ledger import now_iso
 from patchquest.runtime import policy as policy_runtime
+from patchquest.runtime import run_memory
 from patchquest.runtime.retry import run_with_retry
 from patchquest.workflows import store
 
@@ -568,8 +569,15 @@ class WorkflowEngine:
                               {"policy": decision.to_dict()})
             return True
         if decision.approval_required and approver is None and not self._allow_unapproved_writes:
-            self._step_failed(run, wf, node, step, f"'{name}' needs a human approval first ({decision.reason})",
-                              {"policy": decision.to_dict()})
+            detail: dict[str, Any] = {"policy": decision.to_dict()}
+            note = ""
+            wants_auto = run_memory.preference_for(run["workspace_id"], run.get("created_by"), "automation.external_writes")
+            if wants_auto.value == "auto":
+                note = " Your automation preference ('auto') does not override this."
+                detail["explanation"] = {"decision": "approval_required", "because": [
+                    {"kind": "policy", "policy": decision.source_policy, "scope": decision.scope.name.lower(), "reason": decision.reason}],
+                    "overrode_preference": wants_auto.to_dict()}
+            self._step_failed(run, wf, node, step, f"'{name}' needs a human approval first ({decision.reason}).{note}", detail)
             return True
         if info.side_effect in REQUIRES_APPROVAL_EFFECTS and approver is None and not self._allow_unapproved_writes:
             self._step_failed(run, wf, node, step, f"'{name}' ({info.side_effect.value}) needs a human approval first")

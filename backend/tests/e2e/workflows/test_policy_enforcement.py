@@ -69,3 +69,24 @@ async def test_a_corrupt_policy_blocks_commands_rather_than_allowing_them(repo):
         conn.execute("UPDATE policies SET document_json = 'nope'")
     sm, _ = machine(repo)
     assert (await sm._exec("ls"))["blocked"]
+
+
+async def test_policy_can_forbid_a_model_provider_and_the_run_stops_before_any_model_call(repo):
+    from patchquest.domain.failures import FailureKind
+    from tests.support import FIX, PLAN, fetch_events, run_row, run_scripted
+
+    store({"action": "model.use.scripted", "result": "DENY", "reason": "only local models in this workspace"}, name="no-scripted")
+    _, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
+    row = run_row(rid)
+    assert row["status"] == "failed" and row["failure_kind"] == FailureKind.POLICY_DENIED.value
+    denied = [e for e in fetch_events(rid) if e["type"] == "model_denied"]
+    assert denied and denied[0]["payload"]["policy"]["source_policy"] == "no-scripted"
+    assert not [e for e in fetch_events(rid) if e["type"] == "plan_created"]
+
+
+async def test_other_providers_are_unaffected_by_a_provider_rule(repo):
+    from tests.support import FIX, PLAN, run_row, run_scripted
+
+    store({"action": "model.use.openai", "result": "DENY", "reason": "no cloud"}, name="no-openai")
+    _, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
+    assert run_row(rid)["status"] == "completed"

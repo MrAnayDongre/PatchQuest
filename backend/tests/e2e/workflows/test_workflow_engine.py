@@ -654,3 +654,24 @@ class TestPluginActions:
         second = engine.start(save(engine, raw), {"type": "manual", "payload": {"who": "bo"}})
         await settle(engine, second, lambda r: step(second, "g")["status"] == "failed")
         assert "muted" in step(second, "g")["error"]
+
+
+class TestPreferenceVersusPolicy:
+    @pytest.mark.asyncio
+    async def test_an_automation_preference_does_not_override_approval_and_the_step_says_so(self, actions, clock):
+        from patchquest.domain.policy import Scope
+        from patchquest.runtime import memory_service as svc
+
+        with get_db() as conn:
+            svc.set_preference(conn, svc.owner_for(conn, WS), scope=Scope.WORKSPACE, ref=None, key="automation.external_writes",
+                               value="auto", actor="user:ana")
+        permissive = WorkflowEngine(TaskService(), actions, clock=clock, allow_unapproved_writes=True)
+        raw = {"name": "x", "trigger": {"type": "manual"}, "nodes": [
+            {"id": "post", "type": "action", "config": {"action": "github.comment", "params": {"body": "hi"}}},
+            {"id": "done", "type": "end"}], "edges": [{"from": "post", "to": "done"}]}
+        run_id = permissive.start(save(permissive, raw), {"type": "manual"})
+        await WorkflowEngine(TaskService(), actions, clock=clock).advance(run_id)
+        failed = step(run_id, "post")
+        assert failed["status"] == "failed" and "does not override this" in failed["error"] and actions.calls == []
+        why = failed["output"]["explanation"]
+        assert why["because"][0]["policy"] == "system-floor" and why["overrode_preference"]["value"] == "auto"

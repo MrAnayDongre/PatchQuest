@@ -31,6 +31,7 @@ class FailureKind(StrEnum):
     TOOL_FAILURE = "TOOL_FAILURE"
     TOOL_TIMEOUT = "TOOL_TIMEOUT"
     COMMAND_DENIED = "COMMAND_DENIED"
+    POLICY_DENIED = "POLICY_DENIED"
     COMMAND_TIMEOUT = "COMMAND_TIMEOUT"
     COMMAND_FAILED = "COMMAND_FAILED"
     PATCH_PARSE = "PATCH_PARSE"
@@ -114,6 +115,8 @@ SPECS: dict[FailureKind, FailureSpec] = {
                                           ("retry", "raise the tool timeout")),
     FailureKind.COMMAND_DENIED: FailureSpec(False, _S.WARNING, _O.COMMAND, "A command was not allowed to run.",
                                             ("approve it if it is safe", "change the command policy")),
+    FailureKind.POLICY_DENIED: FailureSpec(False, _S.WARNING, _O.RUNTIME, "A policy does not allow this run to do something it needs.",
+                                           ("ask a workspace admin to review the policy", "change the run's provider or settings")),
     FailureKind.COMMAND_TIMEOUT: FailureSpec(False, _S.WARNING, _O.COMMAND, "A command exceeded its time limit and was stopped.",
                                              ("raise the command timeout", "narrow what the command runs")),
     FailureKind.COMMAND_FAILED: FailureSpec(False, _S.INFO, _O.COMMAND, "A command exited with an error.",

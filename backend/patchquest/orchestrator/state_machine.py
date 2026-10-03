@@ -13,6 +13,7 @@ creates a persisted approval and waits, with a timeout that means "denied".
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import time
@@ -36,6 +37,7 @@ from patchquest.orchestrator.run_context import RunContext
 from patchquest.persistence import approvals, checkpoints, ledger
 from patchquest.persistence.runs import transition
 from patchquest.runtime import policy as policy_runtime
+from patchquest.runtime import run_memory
 from patchquest.tools.secret_guard import redact_secrets
 
 if TYPE_CHECKING:
@@ -174,6 +176,7 @@ class RunStateMachine:
         self._cancelled = asyncio.Event()
         self._cancel_flag = threading.Event()  # the same signal for code running in worker threads (subprocesses)
         self._policies: list[Any] | None = None
+        self._prefs: dict[str, Any] | None = None
         self._abandoned = False  # another worker owns the run now: stop quietly, write nothing
         self._critical = False  # True while an operation that must not be interrupted half-way is running
         self.attempt = 1  # incremented by resume; every event carries it
@@ -229,6 +232,7 @@ class RunStateMachine:
         if not resumed:  # a resumed run was already moved to RUNNING by TaskService.resume
             self._move(RunStatus.RUNNING, "execution started")
         try:
+            await self._check_model_policy()
             for phase in PHASE_ORDER:
                 if self.phase_statuses[phase] is not PhaseStatus.PENDING:
                     continue  # settled before the checkpoint this run was resumed from
@@ -448,6 +452,14 @@ class RunStateMachine:
         return approvals.Outcome(approval_id, decision, ApprovalStatus(row["status"]),
                                  row["modified_command"] if decision is Decision.MODIFY else row["command"])
 
+    async def _check_model_policy(self) -> None:
+        """Policy decides whether this run may use its model provider at all (``model.use.<provider>``)."""
+        verdict = policy_runtime.decide(await self._policy_chain(), f"model.use.{self.ctx.provider}")
+        if verdict.result is Result.DENY:
+            await self._emit("model_denied", message=f"Policy '{verdict.source_policy}' does not allow the {self.ctx.provider} provider",
+                             payload={"policy": verdict.to_dict()})
+            raise PatchQuestError(FailureKind.POLICY_DENIED, f"{self.ctx.provider} is not allowed by policy '{verdict.source_policy}': {verdict.reason}")
+
     async def _policy_chain(self) -> list[Any]:
         """The policies that apply to this run, loaded once per machine (a policy change applies to the next run or resume)."""
         if self._policies is None:
@@ -484,7 +496,11 @@ class RunStateMachine:
             result = {"success": False, "returncode": -2, "stdout": "", "stderr": f"Blocked: {decision_reason}",
                       "blocked": True}
         else:
-            if decision.level == RiskLevel.RISKY_ASK or verdict.approval_required:
+            prefs_in_force = await self._preferences()
+            ask_pref = prefs_in_force.get("approval.ask_before_workspace_writes")
+            preference_asks = (ask_pref is not None and ask_pref.value is True and effect is SideEffect.WORKSPACE_WRITE
+                               and decision.level != RiskLevel.BLOCKED)
+            if decision.level == RiskLevel.RISKY_ASK or verdict.approval_required or preference_asks:
                 approved = False
                 with get_db() as conn:
                     remembered = approvals.has_grant(conn, self.run_id, command)
@@ -494,6 +510,8 @@ class RunStateMachine:
                                      payload={"command": safe_cmd, "side_effect": effect.value})
                 else:
                     ask_reason = verdict.reason if decision.level != RiskLevel.RISKY_ASK else decision.reason
+                    if preference_asks and not verdict.approval_required and decision.level != RiskLevel.RISKY_ASK:
+                        ask_reason = "your preference: ask before commands that write in the workspace"
                     outcome = await self._request_approval("command", command, ask_reason, side_effect=effect,
                                                            risk=decision.level.value)
                     approved = outcome.approved
@@ -595,7 +613,33 @@ class RunStateMachine:
         from patchquest.memory.repo_indexer import index_repo
         await self._emit("repo_scan_started", phase="repo_scan", message="Scanning repository")
         await asyncio.to_thread(index_repo, self.ctx.repo_path)
+        await self._adapt()
         await self._emit("repo_scan_completed", phase="repo_scan", message="Repo scan complete")
+
+    async def _adapt(self) -> None:
+        """Detect what changed in the repository since last time and choose what to remember for this task. Never fatal."""
+        try:
+            begun = await asyncio.to_thread(run_memory.begin, self.run_id, self.ctx.task, [], self.ctx.provider,
+                                            await self._policy_chain())
+        except Exception as exc:  # memory is an aid; a failure here must not stop the run
+            logger.warning("memory adaptation failed for run %s", self.run_id, exc_info=True)
+            await self._emit("memory_unavailable", phase="repo_scan", message=f"Continuing without remembered facts: {type(exc).__name__}")
+            return
+        self.ctx.memory_notes = begun.notes
+        for type_, message, payload in begun.events:
+            await self._emit(type_, phase="repo_scan", message=message, payload=payload)
+
+    async def _preferences(self) -> dict[str, Any]:
+        """Preferences in force for this run, loaded once per machine. Policy is always applied on top of them."""
+        if self._prefs is not None:
+            return self._prefs
+        loaded: dict[str, Any] = {}
+        try:
+            loaded = await asyncio.to_thread(run_memory.preferences, self.run_id)
+        except Exception:
+            logger.warning("could not load preferences for run %s", self.run_id, exc_info=True)
+        self._prefs = loaded
+        return loaded
 
     async def _phase_planning(self) -> None:
         from patchquest.agents.roles import run_planner_role
@@ -708,15 +752,34 @@ class RunStateMachine:
             return
         await self._run_commands(commands)
 
-    def _pick_test_commands(self, workspace_path: str) -> list[str]:
-        """Planner-named commands only when the policy would run them unattended; else detection."""
+    def _pick_test_commands(self, workspace_path: str, prefs: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        """Preferred commands first (a person's choice), then the planner's, then detection. A command must still be one the
+        command policy runs unattended and whose tool is installed. Returns the commands and why they were chosen."""
         from patchquest.tools.command_risk import classify
         from patchquest.tools.test_runner import detect_test_commands
 
         limit = get_config().agent.max_test_commands
-        planned = [c for c in self.ctx.test_commands if classify(c, workspace_path).auto and _tool_available(c)]
+        usable = lambda c: classify(c, workspace_path).auto and _tool_available(c)  # noqa: E731
+        why: dict[str, Any] = {"decision": "test_commands", "because": [], "rejected": []}
+        preference = prefs.get("test.commands")
+        if preference is not None and preference.winner is not None:
+            wanted = [c for c in preference.value if isinstance(c, str)]
+            kept = [c for c in wanted if usable(c)]
+            why["rejected"] = [{"command": c, "why": "not run unattended by the command policy, or its tool is not installed"}
+                               for c in wanted if c not in kept]
+            if kept:
+                why["because"] = [{"kind": "preference", **preference.to_dict()["decided_by"], "key": "test.commands"}]
+                why["overridden"] = preference.to_dict()["overridden"]
+                return kept[:limit], why
+            why["assumption_invalidated"] = "none of the preferred test commands can run here; falling back"
+        planned = [c for c in self.ctx.test_commands if usable(c)]
+        if planned:
+            why["because"] = [{"kind": "planner", "note": "named by the plan and allowed to run unattended"}]
+            return planned[:limit], why
         detected = [c for c in detect_test_commands(workspace_path) if _tool_available(c)]
-        return (planned or detected)[:limit]
+        if detected:
+            why["because"] = [{"kind": "repository_detection", "note": "found in the repository's manifests"}]
+        return detected[:limit], why
 
     async def _baseline(self, commands: list[str]) -> list[dict[str, Any]]:
         """Run the same commands on the pristine workspace state, then put the patch back."""
@@ -737,7 +800,13 @@ class RunStateMachine:
         from patchquest.validation import classify_failures
 
         ws = await self._ws()
-        commands = self._pick_test_commands(str(ws.path))
+        commands, why = self._pick_test_commands(str(ws.path), await self._preferences())
+        if why.get("assumption_invalidated"):
+            await self._emit("assumption_invalidated", phase="testing", message=why["assumption_invalidated"],
+                             payload={"assumption": "preferred test commands", "rejected": why["rejected"]})
+        if commands:
+            await self._emit("decision_explained", phase="testing", message="Chose test commands: " + "; ".join(commands), payload={
+                **why, "chosen": commands})
         if not commands:
             self.ctx.verdict = "no_tests"
             await self._skip_phase(Phase.TESTING, "No test commands detected")
@@ -900,6 +969,9 @@ class RunStateMachine:
             return
         self._move(RunStatus.COMPLETED, "all phases finished",
                    fields={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
+        with contextlib.suppress(Exception):  # remembering is never allowed to fail a finished run
+            await asyncio.to_thread(run_memory.record_outcome, self.run_id, self.ctx.task, self.ctx.outcome, self.ctx.verdict,
+                                    list(self.ctx.applied_files))
         await self._emit("run_completed", message="Run completed successfully",
                          payload={"outcome": self.ctx.outcome, "verdict": self.ctx.verdict})
 

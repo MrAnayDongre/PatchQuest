@@ -26,6 +26,7 @@ from patchquest.api.schemas import (
 from patchquest.application import get_service
 from patchquest.application.service import ForkBlocked, ForkError, RunNotActive
 from patchquest.config import get_config
+from patchquest.database import get_db
 from patchquest.domain.approvals import ApprovalError, Decision
 from patchquest.domain.identity import Permission
 from patchquest.persistence import checkpoints
@@ -243,6 +244,18 @@ async def run_checkpoints(access: CanRead) -> list[dict[str, Any]]:
 
     with get_db() as conn:
         return checkpoints.describe(conn, access.run["id"])
+
+
+@router.get("/{run_id}/explanations")
+async def run_explanations(access: CanRead) -> list[dict[str, Any]]:
+    """The decisions in this run that memory, preferences or adaptation shaped, with their provenance."""
+    kinds = ("decision_explained", "assumption_invalidated", "repository_profile_changed", "memory_selected", "memory_invalidated",
+             "memory_withheld", "memory_unavailable")
+    with get_db() as conn:
+        rows = conn.execute(f"SELECT id, type, phase, message, payload_json, created_at FROM run_events WHERE run_id = ? AND type IN ({','.join('?' * len(kinds))}) "
+                            "ORDER BY id", (access.run["id"], *kinds)).fetchall()
+    return [{"id": r["id"], "type": r["type"], "phase": r["phase"], "message": r["message"], "created_at": r["created_at"],
+             "payload": json.loads(r["payload_json"]) if r["payload_json"] else None} for r in rows]
 
 
 @router.get("/{run_id}/budget")

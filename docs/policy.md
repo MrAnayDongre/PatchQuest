@@ -37,10 +37,12 @@ limits: {agent.max_model_calls: 20, agent.max_commands: 30}
 | a command about to run in a run | `command.run` | `DENY` blocks it (like the command gate's own block); `REQUIRE_APPROVAL` asks even if the command gate would run it |
 | a workflow action about to be performed | `action.<name>` | `DENY` fails the step; `REQUIRE_APPROVAL` fails the step unless a human approval sits upstream |
 | run creation, fork, replay | `agent.*` ceilings | overrides and defaults are clamped |
+| a run starting | `model.use.<provider>` | `DENY` fails the run with `POLICY_DENIED` before any model call |
+| memory about to be shown to a model | `memory.inject.local` / `memory.inject.cloud` | `DENY` keeps remembered notes out of that call |
 
 A policy change applies to the next run (or resume); a running run keeps the chain it loaded.
 
-Not yet enforced by policy: network access, provider/model use, plugin and artifact-disclosure actions. Those still
+Not yet enforced by policy: network access and artifact disclosure. Those still
 use the existing config switches (`safety.*`, failover) until the corresponding subsystems call `decide`.
 
 ## Commands

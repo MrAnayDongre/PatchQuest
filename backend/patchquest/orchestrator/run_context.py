@@ -141,6 +141,7 @@ class RunContext:
     approvals: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
+    memory_notes: list[dict[str, Any]] = field(default_factory=list)  # advisory facts chosen for this run (see runtime.run_memory)
     # --- validated-patch pipeline ---
     context_provenance: list[dict[str, Any]] = field(default_factory=list)
     patch_summary: list[dict[str, Any]] = field(default_factory=list)  # per-file action/added/removed

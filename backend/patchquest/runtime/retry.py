@@ -25,7 +25,7 @@ T = TypeVar("T")
 
 # Never retried regardless of what the table says about the kind in general.
 NEVER_RETRY = frozenset({
-    FailureKind.COMMAND_DENIED, FailureKind.USER_CANCELLED, FailureKind.BUDGET_EXHAUSTED,
+    FailureKind.COMMAND_DENIED, FailureKind.POLICY_DENIED, FailureKind.USER_CANCELLED, FailureKind.BUDGET_EXHAUSTED,
     FailureKind.INTERNAL_INVARIANT, FailureKind.REPOSITORY_DRIFT, FailureKind.MODEL_CAPABILITY,
     FailureKind.CONNECTOR_AUTH, FailureKind.MODEL_AUTH, FailureKind.REPLAY_DIVERGED, FailureKind.PATCH_PARSE, FailureKind.MODEL_INVALID_OUTPUT,
 })
