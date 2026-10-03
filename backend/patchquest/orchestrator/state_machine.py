@@ -338,6 +338,18 @@ class RunStateMachine:
         self.ctx.applied_files = [f["path"] for f in self.ctx.patch_summary]
         return True, ""
 
+    async def _apply_failure_hint(self, error: str) -> str:
+        ws = await self._ws()
+        blocks = []
+        for path in list(self.ctx.selected_context or {})[:4]:
+            try:
+                text = await asyncio.to_thread((ws.path / path).read_text, "utf-8", "replace")
+            except OSError:
+                continue
+            blocks.append(f'<file path="{path}">\n{text[:6000]}\n</file>')
+        return (f"Your previous edit could not be applied: {error}\n"
+                "Copy the text to replace EXACTLY from the current file contents below.\n" + "\n".join(blocks))
+
     # ------------------------------------------------------------------ phases
     async def _phase_intake(self) -> None:
         from patchquest.agents.roles import run_intake_role
@@ -424,6 +436,16 @@ class RunStateMachine:
                 self._no_patch = True
                 await self._emit("patch_missing", phase="patching",
                                  message="The agent produced no edits for a task that requires changes")
+        attempts = max(1, get_config().agent.max_patch_attempts)
+        for attempt in range(2, attempts + 1):
+            if not error or self._patch_secret:
+                break
+            # The edit did not apply (e.g. the search text is not in the file). Show the model the
+            # error and the file as it really is, then let it try again.
+            await self._emit("patch_retry", phase="patching", message=f"Patch did not apply; retry {attempt}/{attempts}",
+                             payload={"error": error[:500]})
+            output = await run_patch_role(self.ctx, hint=await self._apply_failure_hint(error))
+            applied, error = await self._apply_model_output(output)
         if error:
             await self._emit("patch_rejected", phase="patching", message=f"Patch rejected: {error}")
             if self._patch_secret:

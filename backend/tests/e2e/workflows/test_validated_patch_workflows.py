@@ -321,3 +321,15 @@ class TestPlannerCannotVeto:
         sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [FIX]})
         script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
         assert "Task mode (decided by the harness): MODIFY" in script.calls_for("planner")[0]["messages"][1]["content"]
+
+
+class TestApplyFeedback:
+    @pytest.mark.asyncio
+    async def test_unappliable_edit_is_retried_with_the_real_file(self, repo):
+        bad = {"edits": [{"path": "calc.py", "search": "return a  -  b", "replace": "return a + b"}],
+               "create": [], "delete": [], "rationale": ""}
+        sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [bad, FIX]})
+        assert run_row(rid)["verdict"] == "passed"
+        script = next(s for n, s in ScriptedProvider.scripts.items() if n.endswith(rid))
+        retry_prompt = script.calls_for("coder")[1]["messages"][1]["content"]
+        assert "could not be applied" in retry_prompt and "return a - b" in retry_prompt
