@@ -16,7 +16,7 @@ A **modular monolith with a durable worker runtime**: strong internal boundaries
                          |                |
                agents, providers, tools, sandbox, repo intelligence
                          |
-               persistence (SQLite: ledger, checkpoints, identity, audit, queue)
+               persistence (SQLite locally, PostgreSQL in server mode: ledger, checkpoints, identity, audit, queue)
                          |
                observability (metrics, OTLP traces) - derived from the ledger
 ```
@@ -27,16 +27,18 @@ Dependencies point **down** this list; a package never imports from one above it
 
 | Package | Responsibility |
 |---|---|
-| `domain/` | pure types and rules: run status machine, failure taxonomy, side effects, approvals, identity/roles, budgets, workflow definitions. No I/O. |
-| `persistence/` | migrations, the append-only ledger, validated run transitions, checkpoints, approvals, identity, queue-agnostic SQL |
-| `runtime/` | fingerprints and drift, resume planning, replay, lineage/fork, retry engine, queue + worker, workspace and sandbox |
+| `domain/` | pure types and rules: run status machine, failure taxonomy, side effects, approvals, identity/roles, tenancy, **policy**, **memory and preferences**, **plugin manifests**, budgets, workflow definitions. No I/O. |
+| `persistence/`, `database.py`, `dbpg.py` | migrations (16), the append-only ledger, validated run transitions, checkpoints, approvals, identity, tenancy, policies, memories, plugin state. One SQL subset for SQLite and PostgreSQL; `dbpg.py` translates the few dialect differences and pools connections; writes can be fenced by lease epoch |
+| `runtime/` | fingerprints and drift, resume planning, replay, lineage/fork, retry engine, queue + worker (leases, `SKIP LOCKED`), workspace and sandbox, **policy** application, **memory service, run memory, repository profile** |
 | `orchestrator/` | `RunStateMachine` (12 phases), snapshot codec, event bus |
 | `agents/`, `providers/` | model roles and prompts, provider contract and adapters, structured output, budgeting, failover, health |
 | `patching/`, `tools/`, `execution/`, `validation/`, `context/`, `memory/` | verified edits, command policy and execution, test running, context selection, repo index |
 | `application/` | `TaskService`: the one place API and CLI go through (create, launch, resume, fork, replay, decide, enqueue) |
-| `workflows/`, `connectors/` | durable workflow engine and templates; webhook/outbound/SSRF/connector contract |
-| `observability/`, `evaluation/`, `rl/` | metrics, traces; the evaluation corpus and runner; the agent gym |
-| `api/`, `cli.py`, `main.py` | thin adapters: auth dependencies, routes, commands |
+| `workflows/`, `connectors/`, `integrations/` | durable workflow engine and templates; connector contract and the GitHub, Slack, Linear, Jira, Notion and webhook connectors; per-workspace integrations with encrypted secrets (`secrets_store.py`) and the signed `/hooks` ingress |
+| `plugins/` | plugin host: discovery, grants, policy-gated invocation, quarantine; trusted (in-process) and external-process runners |
+| `demo/` | the seeded demo world, simulators, and the kill-the-worker scenario |
+| `observability/`, `evaluation/`, `rl/` | run and operational metrics, traces; the evaluation corpus, recovery scenarios, context-quality harness; the agent gym, parallel rollouts, production-run trajectories |
+| `api/`, `cli*.py`, `main.py` | thin adapters: auth dependencies, routes (runs, workflows, policies, memory, tenancy, integrations, hooks, metrics), commands |
 
 ## One run
 
@@ -72,3 +74,8 @@ Everything the UI, metrics and traces show is *derived* from these rows, so a re
 - **Migration:** append to `persistence/schema.py` (never edit a shipped one).
 
 Not built: a plugin loader, a vector index, PostgreSQL. See [deployment.md](deployment.md) and the README status table.
+| Policy, memory, preferences | `policies`, `memories` | versioned by supersession, tenant-owned, never deleted |
+| Teams, projects, repositories | `teams team_members team_roles projects repositories` | a path belongs to one workspace |
+| Integrations and secrets | `integrations secrets` | secrets encrypted, bound to their row |
+| Plugins | `plugin_state plugin_events` | append-only event record |
+| Repository index | `repo_files repo_symbols` | incremental, per repository |
