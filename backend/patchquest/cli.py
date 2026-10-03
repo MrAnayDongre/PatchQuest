@@ -758,6 +758,20 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_openapi(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from patchquest.main import app
+
+    text = _json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
+    if args.out:
+        from pathlib import Path
+        Path(args.out).write_text(text)
+    else:
+        sys.stdout.write(text)
+    return EXIT_OK
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -1116,6 +1130,8 @@ def build_parser() -> argparse.ArgumentParser:
     ip.add_argument("file")
     ip.add_argument("--workspace", default="ws_local")
     ip.add_argument("--json", action="store_true")
+    oa = sub.add_parser("openapi", help="print the HTTP API's OpenAPI document (the contract SDKs are generated from)")
+    oa.add_argument("--out", help="write to this file instead of stdout")
     wk = sub.add_parser("worker", help="execute queued runs (with queue_mode on); recovers runs whose worker died")
     wk.add_argument("--id", help="worker name (default: host-pid-random)")
     wk.add_argument("--lease", type=float, help="seconds a claimed run stays ours without a heartbeat (default: config)")
@@ -1208,7 +1224,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"export": _cmd_export, "import": _cmd_import, "backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"openapi": _cmd_openapi, "export": _cmd_export, "import": _cmd_import, "backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)
