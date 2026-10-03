@@ -723,6 +723,41 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         return EXIT_FAILED
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from patchquest import portability
+
+    try:
+        names = portability.export_run(args.run_id, Path(args.dest), include_model_io=args.model_io, include_code=args.code)
+    except LookupError:
+        print(f"error: no run {args.run_id}", file=sys.stderr)
+        return EXIT_USAGE
+    except (FileExistsError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    print(f"wrote {args.dest} ({', '.join(names)})" + ("" if args.code else "; no checkpoints, so it cannot be resumed or forked")
+          + ("" if args.model_io else "; no model prompts or answers, so it cannot be model-replayed"), file=sys.stderr)
+    return EXIT_OK
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from patchquest import portability
+
+    try:
+        run_id = portability.import_run(Path(args.file), workspace_id=args.workspace)
+    except portability.ImportRefused as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    _emit_json({"run_id": run_id}) if args.json else print(f"imported as run {run_id}; try `patchquest inspect {run_id}`")
+    return EXIT_OK
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -1072,6 +1107,15 @@ def build_parser() -> argparse.ArgumentParser:
     br.add_argument("--yes", action="store_true")
     for x in (bc, bv, br):
         x.add_argument("--json", action="store_true")
+    xp = sub.add_parser("export", help="write a sanitized, shareable bundle of one run")
+    xp.add_argument("run_id")
+    xp.add_argument("dest", help="a new .zip file")
+    xp.add_argument("--model-io", action="store_true", help="include prompts and answers (enables model replay)")
+    xp.add_argument("--code", action="store_true", help="include checkpoints, which hold the files the run touched (enables fork/resume)")
+    ip = sub.add_parser("import", help="import a run bundle as a read-only record")
+    ip.add_argument("file")
+    ip.add_argument("--workspace", default="ws_local")
+    ip.add_argument("--json", action="store_true")
     wk = sub.add_parser("worker", help="execute queued runs (with queue_mode on); recovers runs whose worker died")
     wk.add_argument("--id", help="worker name (default: host-pid-random)")
     wk.add_argument("--lease", type=float, help="seconds a claimed run stays ours without a heartbeat (default: config)")
@@ -1164,7 +1208,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"export": _cmd_export, "import": _cmd_import, "backup": _cmd_backup, "queue": _cmd_queue, "trace": _cmd_trace, "metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)
