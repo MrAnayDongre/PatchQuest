@@ -143,3 +143,4 @@ def test_the_kill_the_worker_demo_recovers_with_one_write_and_a_real_sigkill(tmp
                          env={**os.environ, "HOME": str(tmp_path)})
     assert out.returncode == 0, out.stdout + out.stderr
     assert "killing it with SIGKILL" in out.stdout and "run_interrupted" in out.stdout and "patch applied 1 time(s); repository fixed: True" in out.stdout
+    assert "planner model calls 1" in out.stdout and "duplicate side effects 0" in out.stdout and "resumed at phase 'patching'" in out.stdout

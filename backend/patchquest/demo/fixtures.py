@@ -94,6 +94,7 @@ WRONG_REFUND = edit("payments/refunds.py", '    return {"approved": True, "amoun
                     '    return {"approved": amount_cents < 1_000, "amount": amount_cents}', "first attempt: a limit that is far too low")
 FIX_CART = edit("src/cart.js", "sum + item.price", "sum + item.price * item.quantity", "the total must include each item's quantity")
 HALF_TAX = edit("payments/tax.py", "return int(subtotal_cents * rate)", "return int(subtotal_cents * rate) + 0", "attempted rounding (does not change the result)")
+FIX_TAX = edit("payments/tax.py", "return int(subtotal_cents * rate)", "return int(round(subtotal_cents * rate))", "round to the nearest cent")  # used by the fork demonstration
 
 FIX_PRICE: dict[str, Any] = {"edits": [
     {"path": "payments/currency.py", "search": '"""Price parsing."""\n', "replace": '"""Price parsing."""\n\nfrom decimal import ROUND_HALF_UP, Decimal\n'},
@@ -122,7 +123,7 @@ ISSUE_WORKFLOW: dict[str, Any] = {
         {"id": "done", "type": "end", "config": {}},
     ],
     "layout": {"investigate": {"x": 0, "y": 0}, "validated": {"x": 240, "y": 0}, "review": {"x": 480, "y": 0}, "comment": {"x": 720, "y": 0},
-               "note": {"x": 240, "y": 160}, "done": {"x": 480, "y": 160}, "tell": {"x": 720, "y": 160}},
+               "tell": {"x": 960, "y": 0}, "done": {"x": 1200, "y": 80}, "note": {"x": 240, "y": 170}},  # left to right: no arrow runs backwards
     "edges": [{"from": "investigate", "to": "validated"}, {"from": "validated", "to": "review", "when": "true"},
               {"from": "validated", "to": "note", "when": "false"}, {"from": "review", "to": "comment", "when": "approved"},
               {"from": "review", "to": "done", "when": "denied"}, {"from": "review", "to": "done", "when": "timeout"},

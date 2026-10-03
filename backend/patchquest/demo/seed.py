@@ -49,6 +49,8 @@ def register_scripts() -> None:
     _script("demo-cart", planner=fx.plan(["src/cart.js"], "total ignores quantity", NPM), coder=[fx.FIX_CART])
     _script("demo-tax-denied", planner=fx.plan(["payments/tax.py"], "round tax to the nearest cent", fx.unit("tax")), coder=[fx.HALF_TAX], repair=[EMPTY, EMPTY])
     _script("demo-tax-pending", planner=fx.plan(["payments/tax.py"], "round tax to the nearest cent", fx.unit("tax")), coder=[fx.HALF_TAX], repair=[EMPTY, EMPTY])
+    # a stronger model for the fork demonstration: fork the denied tax run from its plan with this model and the patch validates
+    _script("demo-tax-fixed", planner=fx.plan(["payments/tax.py"], "round tax to the nearest cent", fx.unit("tax")), coder=[fx.FIX_TAX])
     _script("demo-explain", planner=fx.plan(["payments/refunds.py"], "read-only"), coder=[EMPTY],
             extra={"analyst": ["Refunds go through payments.refunds.process_refund(amount_cents, original_cents). It rejects a refund larger than "
                                "the original charge with a ValueError and otherwise approves it. REFUND_LIMIT_CENTS (50,000) exists but is not "
