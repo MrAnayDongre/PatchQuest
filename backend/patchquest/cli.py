@@ -462,6 +462,47 @@ def _cmd_admin(args: argparse.Namespace) -> int:
     return EXIT_USAGE
 
 
+def _cmd_metrics(args: argparse.Namespace) -> int:
+    from patchquest.config import get_config
+    from patchquest.observability.metrics import MetricsQuery, compute, parse_window
+
+    try:
+        query = MetricsQuery(since=parse_window(args.window), group_by=args.by, pricing=get_config().pricing)
+        with get_db() as conn:
+            result = compute(conn, query)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.json:
+        _emit_json(result)
+        return EXIT_OK
+
+    def show(title: str, m: dict[str, Any]) -> None:
+        def pct(v: float | None) -> str:
+            return "-" if v is None else f"{v * 100:.0f}%"
+
+        def secs(d: dict[str, Any]) -> str:
+            return "-" if d["p50"] is None else f"p50 {d['p50']:.1f}s  p95 {d['p95']:.1f}s"
+
+        print(f"{title}: {m['runs']} runs ({m['finished']} finished)")
+        print(f"  success {pct(m['task_success_rate'])}   validation {pct(m['validation_pass_rate'])}   "
+              f"first-pass {pct(m['first_pass_success_rate'])}   resume {pct(m['resume_success_rate'])}")
+        print(f"  time to completion {secs(m['time_to_completion_s'])}   approvals {m['human_interventions']} ({secs(m['approval_latency_s'])})")
+        print(f"  model calls/run {m['mean_model_calls'] or '-'}   tokens {m['tokens']['total']}   "
+              f"compute {m['model_compute_s']}s   retries {pct(m['retry_rate'])}")
+        if m["failure_distribution"]:
+            print("  failures: " + ", ".join(f"{k} x{v}" for k, v in m["failure_distribution"].items()))
+
+    show(f"last {args.window}", result["totals"])
+    for name, block in (result.get("groups") or {}).items():
+        show(f"{args.by} {name}", block)
+    for row in result["models"]:
+        lat = row["latency_ms"]
+        print(f"  {row['provider']}/{row['model']}: {row['calls']} calls, error rate {row['error_rate']}, "
+              f"p50 {lat['p50']}ms p95 {lat['p95']}ms")
+    return EXIT_OK
+
+
 def _cmd_engines(args: argparse.Namespace) -> int:
     from patchquest.providers.engines import engine_report
 
@@ -684,6 +725,10 @@ def build_parser() -> argparse.ArgumentParser:
     aa = asub.add_parser("audit", help="the security audit log", parents=[as_json])
     aa.add_argument("--after", type=int, default=0)
     aa.add_argument("--limit", type=int, default=200)
+    mt = sub.add_parser("metrics", help="reliability, latency, token and cost metrics from the run history")
+    mt.add_argument("--window", default="7d", help="30m, 24h, 7d, 2w (default 7d)")
+    mt.add_argument("--by", choices=["model", "provider", "repository", "workspace"])
+    mt.add_argument("--json", action="store_true")
     en = sub.add_parser("engines", help="local serving engines: running, model loaded, context limit, capabilities")
     en.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check the installation, configuration and safety boundaries")
@@ -723,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_fork(args))
     if args.cmd == "replay":
         return asyncio.run(_replay(args))
-    handlers = {"admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
+    handlers = {"metrics": _cmd_metrics, "admin": _cmd_admin, "engines": _cmd_engines, "lineage": _cmd_lineage, "checkpoints": _cmd_checkpoints, "events": _cmd_events, "status": _cmd_status, "inspect": _cmd_inspect, "diff": _cmd_diff, "report": _cmd_report,
                 "approve": _cmd_approve, "providers": _cmd_providers, "doctor": _cmd_doctor, "serve": _cmd_serve,
                 "eval": _cmd_eval}
     return handlers[args.cmd](args)

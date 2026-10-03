@@ -213,6 +213,9 @@ class AppConfig(BaseModel):
     # SQLite file. Unset: $PATCHQUEST_DB, else ./patchquest.db if it already exists (legacy), else
     # ~/.patchquest/patchquest.db. It is never created inside the repository you point a run at.
     db_path: str | None = None
+    # Optional price list for cost metrics: model name -> {"input_per_mtok": usd, "output_per_mtok": usd}.
+    # Without an entry a model reports tokens and compute time, never an invented dollar figure.
+    pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
     host: str = "127.0.0.1"
     port: int = 8000
     # Name of the environment variable holding the API bearer token. Required when host is not loopback.
