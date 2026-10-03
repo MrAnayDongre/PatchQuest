@@ -45,7 +45,7 @@ export function RunHeader({ run, state, connection, onCancel, onResume, onFork, 
               <Button icon="replay" onClick={onReplay}>Replay</Button>
             </>
           )}
-          {(run.status === 'running' || run.status === 'waiting_approval' || run.status === 'created') && (
+          {(run.status === 'running' || run.status === 'waiting_approval' || run.status === 'created' || run.status === 'queued') && (
             <Button variant="danger" icon="stop" onClick={onCancel}>Cancel run</Button>
           )}
         </div>

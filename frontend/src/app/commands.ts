@@ -33,6 +33,7 @@ export function buildCommands(d: CommandDeps): PaletteCommand[] {
     go('Go to Home', buildHash('home'), ['dashboard', 'mission control'], ['g', 'h']),
     go('Go to Runs', buildHash('runs'), ['list', 'history'], ['g', 'r']),
     go('Go to Engines', buildHash('engines'), ['providers', 'models', 'local'], ['g', 'e']),
+    go('Go to Metrics', buildHash('metrics'), ['success rate', 'latency', 'tokens', 'cost'], ['g', 'm']),
     go('Go to Settings', buildHash('settings'), ['token', 'preferences'], ['g', 's']),
     go('Go to Extras', buildHash('extras'), ['games', 'calendar', 'search', 'memory', 'scheduler'], ['g', 'x']),
   ]

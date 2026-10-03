@@ -169,7 +169,7 @@ export function StatusDot({ tone, pulse }: { tone: Tone; pulse?: boolean }) {
 /** Dot plus a text label, so status never relies on color alone. */
 export function StatusIndicator({ status, label }: { status: string; label?: string }) {
   const tone = statusTone(status)
-  const pulse = status === 'running' || status === 'waiting_approval' || status === 'cancel_requested'
+  const pulse = status === 'queued' || status === 'running' || status === 'waiting_approval' || status === 'cancel_requested'
   return (
     <span className="ui-status">
       <StatusDot tone={tone} pulse={pulse} />

@@ -44,6 +44,7 @@ describe('formatting', () => {
     expect(truncate('abcdefghij', 6)).toBe('abcde…')
     expect(baseName('/home/me/project/')).toBe('project')
     expect(humanize('model_calls')).toBe('Model calls')
+    expect(humanize('MODEL_TIMEOUT')).toBe('Model timeout')
     expect(plural(1, 'file')).toBe('1 file')
     expect(plural(3, 'file')).toBe('3 files')
   })

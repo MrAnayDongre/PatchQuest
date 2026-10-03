@@ -45,7 +45,7 @@ export default function RunPage({ runId, tab }: { runId: string; tab?: string })
     if (!status) return
     const cmds: PaletteCommand[] = []
     if (pending) cmds.push({ id: 'run:approve', title: `Review pending approval${pending > 1 ? 's' : ''}`, group: 'This run', keywords: ['approve', 'deny'], run: focusApprovals })
-    if (status === 'running' || status === 'waiting_approval' || status === 'created') cmds.push({ id: 'run:cancel', title: 'Cancel this run', group: 'This run', run: () => setDialog('cancel') })
+    if (status === 'running' || status === 'waiting_approval' || status === 'created' || status === 'queued') cmds.push({ id: 'run:cancel', title: 'Cancel this run', group: 'This run', run: () => setDialog('cancel') })
     if (status === 'interrupted') cmds.push({ id: 'run:resume', title: 'Resume this run', group: 'This run', run: () => setDialog('resume') })
     if (!isActiveStatus(status)) {
       cmds.push({ id: 'run:fork', title: 'Fork this run', group: 'This run', run: () => { setForkFrom(undefined); setDialog('fork') } })

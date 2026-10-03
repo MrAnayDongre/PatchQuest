@@ -19,7 +19,7 @@ function loadLast(): Partial<NewRunForm> {
   }
 }
 
-const blank = (): NewRunForm => ({ repoPath: '', provider: 'mock', model: '', runtime: 'local', dryRun: false, baseUrl: '', workspaceId: '', ...loadLast(), task: '' })
+const blank = (): NewRunForm => ({ repoPath: '', provider: 'mock', model: '', runtime: 'local', dryRun: false, baseUrl: '', workspaceId: '', overrides: '', ...loadLast(), task: '' })
 
 export function NewRunDialog() {
   const { newRunOpen, closeNewRun, refreshRuns } = useApp()
@@ -165,7 +165,9 @@ export function NewRunDialog() {
             <Field label="Base URL" optional error={fieldErr('baseUrl')} hint="Only for self-hosted or OpenAI-compatible endpoints.">
               {p => <Input {...p} value={form.baseUrl} onChange={e => set('baseUrl', e.target.value)} placeholder={provider?.base_url ?? 'https://…'} spellCheck={false} />}
             </Field>
-            <p className="ui-muted">To raise limits such as model calls, fork the run from a checkpoint and set the new limit there.</p>
+            <Field label="Run limits and settings" optional error={fieldErr('overrides')} hint="One per line, for example agent.max_model_calls=80. Only agent.* settings can be set; safety rules can't be changed.">
+              {p => <Textarea {...p} value={form.overrides} onChange={e => set('overrides', e.target.value)} rows={3} spellCheck={false} className="ui-mono" placeholder="agent.max_model_calls=80" />}
+            </Field>
           </div>
         </details>
         {workspaces.length > 0 && (

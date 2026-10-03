@@ -124,7 +124,7 @@ export interface RunState {
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled'])
 export const isTerminalStatus = (s: string | null | undefined): boolean => !!s && TERMINAL_STATUSES.has(s)
 export const isActiveStatus = (s: string | null | undefined): boolean =>
-  s === 'created' || s === 'running' || s === 'waiting_approval' || s === 'cancel_requested'
+  s === 'created' || s === 'queued' || s === 'running' || s === 'waiting_approval' || s === 'cancel_requested'
 
 export function initialRunState(): RunState {
   return {
@@ -237,7 +237,7 @@ function applyOne(s: RunState, e: RunEvent): void {
       s.status = to as RunStatus
       s.statusReason = e.message
       s.statusTrail = [...s.statusTrail, { eventId: e.id, from: asStr(p.from), to, reason: e.message, at: e.created_at }]
-      if (to !== 'waiting_approval' && to !== 'running' && to !== 'created') s.pendingApprovals = []
+      if (to !== 'waiting_approval' && to !== 'running' && to !== 'created' && to !== 'queued') s.pendingApprovals = []
       else s.ended = false
       break
     }
@@ -507,7 +507,6 @@ export function pendingToInfo(a: {
     phase: a.phase,
     requestedAt: a.created_at,
     expiresAt: a.expires_at,
-    // The list endpoint does not say whether a grant is possible. Only offer it when the event stream did.
     grantable: a.grantable === true,
     eventId: 0,
   }

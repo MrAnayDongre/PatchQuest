@@ -87,6 +87,7 @@ const STATUS_RANK: Record<string, number> = {
   interrupted: 1,
   running: 2,
   cancel_requested: 3,
+  queued: 4,
   created: 4,
   failed: 5,
   completed: 6,

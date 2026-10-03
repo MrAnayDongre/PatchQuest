@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { listRuns, RUNS_PAGE } from '../../api/client'
+import type { Run } from '../../api/types'
 import { useApp } from '../../app/AppContext'
 import { isTypingTarget } from '../../app/shortcuts'
 import { Button, Card, EmptyState, Field, Input, Select, Skeleton } from '../../design/primitives'
@@ -20,7 +22,28 @@ export default function RunsPage() {
   const { runs, runsLoaded, runsError, refreshRuns, openNewRun } = useApp()
   const [filters, setFilters] = useState<RunFilters>(DEFAULT_FILTERS)
   const [selected, setSelected] = useState(-1)
-  const list = useMemo(() => filterRuns(runs, filters), [runs, filters])
+  const [older, setOlder] = useState<Run[]>([])
+  const [lastPageFull, setLastPageFull] = useState<boolean | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState<unknown>(null)
+  const all = useMemo(() => mergeRuns(runs, older), [runs, older])
+  const list = useMemo(() => filterRuns(all, filters), [all, filters])
+  const hasMore = lastPageFull ?? runs.length >= RUNS_PAGE
+  const loadMore = async () => {
+    const oldest = all.reduce<string | null>((m, r) => (m === null || r.created_at < m ? r.created_at : m), null)
+    if (!oldest) return
+    setLoadingMore(true)
+    setMoreError(null)
+    try {
+      const page = await listRuns(undefined, { before: oldest })
+      setOlder(prev => mergeRuns(prev, page))
+      setLastPageFull(page.length >= RUNS_PAGE)
+    } catch (e) {
+      setMoreError(e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
   const set = <K extends keyof RunFilters>(k: K, v: RunFilters[K]) => {
     setFilters(f => ({ ...f, [k]: v }))
     setSelected(-1)
@@ -48,7 +71,7 @@ export default function RunsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Runs" subtitle={runsLoaded ? `${list.length} of ${runs.length} shown` : undefined} actions={<Button variant="primary" icon="plus" onClick={openNewRun}>New run</Button>} />
+      <PageHeader title="Runs" subtitle={runsLoaded ? `${list.length} of ${all.length} loaded` : undefined} actions={<Button variant="primary" icon="plus" onClick={openNewRun}>New run</Button>} />
       <div className="filters" role="search">
         <Field label="Search" className="filters__search">
           {p => <Input {...p} type="search" placeholder="Search tasks, repositories, models" value={filters.query} onChange={e => set('query', e.target.value)} />}
@@ -89,10 +112,10 @@ export default function RunsPage() {
         <Card>
           <EmptyState
             icon="runs"
-            title={runs.length ? 'No runs match these filters' : 'No runs yet'}
-            action={runs.length ? <Button onClick={() => { setFilters(DEFAULT_FILTERS) }}>Clear filters</Button> : <Button variant="primary" onClick={openNewRun}>Start your first run</Button>}
+            title={all.length ? 'No runs match these filters' : 'No runs yet'}
+            action={all.length ? <Button onClick={() => { setFilters(DEFAULT_FILTERS) }}>Clear filters</Button> : <Button variant="primary" onClick={openNewRun}>Start your first run</Button>}
           >
-            {runs.length ? 'Try a different search or status.' : 'Start a run and it will appear here.'}
+            {all.length ? 'Try a different search or status.' : 'Start a run and it will appear here.'}
           </EmptyState>
         </Card>
       ) : (
@@ -104,9 +127,21 @@ export default function RunsPage() {
               </div>
             ))}
           </div>
+          {hasMore && (
+            <div className="runs-more">
+              {!!moreError && <ErrorNotice error={moreError} subject="older runs" />}
+              <Button loading={loadingMore} onClick={loadMore}>Load older runs</Button>
+            </div>
+          )}
           <p className="ui-muted runs-hint">Tip: press <kbd className="ui-kbd">j</kbd> and <kbd className="ui-kbd">k</kbd> to move, <kbd className="ui-kbd">Enter</kbd> to open.</p>
         </Card>
       )}
     </div>
   )
+}
+
+function mergeRuns(a: Run[], b: Run[]): Run[] {
+  const byId = new Map<string, Run>()
+  for (const r of [...b, ...a]) byId.set(r.id, r)
+  return [...byId.values()]
 }

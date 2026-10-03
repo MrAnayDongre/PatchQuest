@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getPendingApprovals, getRunEvents } from '../../api/client'
+import { getPendingApprovals, getRunEvents, RUNS_PAGE } from '../../api/client'
 import type { Run } from '../../api/types'
 import { useApp } from '../../app/AppContext'
 import { Sparkline, StackedBar } from '../../design/data'
@@ -171,7 +171,7 @@ export default function HomePage() {
               </div>
             </section>
           )}
-          <p className="ui-muted home-note">Numbers reflect the most recent runs the server returns (up to 50).</p>
+          <p className="ui-muted home-note">{runs.length >= RUNS_PAGE ? `Numbers cover the ${runs.length} most recent runs. See Metrics for longer windows.` : `Numbers cover all ${runs.length} runs on this server.`}</p>
         </>
       )}
     </div>

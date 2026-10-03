@@ -33,3 +33,11 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
 
 // jsdom does not implement scrolling; the app calls it on navigation.
 if (typeof window !== 'undefined') window.scrollTo = (() => {}) as typeof window.scrollTo
+
+// jsdom has no matchMedia; the theme provider asks for it.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = ((query: string) => ({
+    matches: false, media: query, onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia
+}

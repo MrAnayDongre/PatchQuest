@@ -38,7 +38,7 @@ afterEach(() => {
 
 describe('app', () => {
   it('home shows an honest empty state and onboarding when there are no runs', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [] }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [] }])
     renderApp('#/')
     await screen.findByText('Try your first run')
     expect(screen.getByRole('button', { name: 'Run the sample task' })).toBeTruthy()
@@ -49,7 +49,7 @@ describe('app', () => {
     mockFetch([
       ...common,
       {
-        match: /\/api\/runs$/,
+        match: /\/api\/runs(\?.*)?$/,
         body: [
           run('a', 'waiting_approval'),
           run('b', 'completed', { completed_at: '2026-01-01T10:02:00Z', outcome: 'applied', verdict: 'passed' }),
@@ -69,7 +69,7 @@ describe('app', () => {
   })
 
   it('runs list filters by search text', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [run('a', 'completed', { task: 'Fix login' }), run('b', 'completed', { task: 'Add docs' })] }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [run('a', 'completed', { task: 'Fix login' }), run('b', 'completed', { task: 'Add docs' })] }])
     renderApp('#/runs')
     await screen.findByText('Fix login')
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'docs' } })
@@ -78,7 +78,7 @@ describe('app', () => {
   })
 
   it('runs list supports j/k and Enter', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [run('a', 'completed', { task: 'First', updated_at: '2026-01-02T00:00:00Z' }), run('b', 'completed', { task: 'Second' })] }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [run('a', 'completed', { task: 'First', updated_at: '2026-01-02T00:00:00Z' }), run('b', 'completed', { task: 'Second' })] }])
     renderApp('#/runs')
     await screen.findByText('First')
     fireEvent.keyDown(document.body, { key: 'j' })
@@ -91,7 +91,7 @@ describe('app', () => {
     const events = happyRun().slice(0, 12)
     mockFetch([
       ...common,
-      { match: /\/api\/runs$/, body: [run('r1', 'waiting_approval')] },
+      { match: /\/api\/runs(\?.*)?$/, body: [run('r1', 'waiting_approval')] },
       { match: /\/api\/runs\/r1$/, body: run('r1', 'waiting_approval') },
       { match: /\/api\/runs\/r1\/events/, body: events },
       { match: /\/api\/runs\/r1\/approvals\/ap1$/, method: 'POST', body: { status: 'approved', decision: 'APPROVE_ONCE' } },
@@ -110,7 +110,7 @@ describe('app', () => {
   })
 
   it('command palette opens with Ctrl+K and navigates', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [run('a', 'completed', { task: 'Fix login' })] }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [run('a', 'completed', { task: 'Fix login' })] }])
     renderApp('#/')
     await screen.findByText('Fix login')
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
@@ -121,13 +121,13 @@ describe('app', () => {
   })
 
   it('shows a friendly page for unknown routes', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [] }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [] }])
     renderApp('#/nope')
     expect(await screen.findByText('Page not found')).toBeTruthy()
   })
 
   it('shows the 404 for a missing run in plain words', async () => {
-    mockFetch([...common, { match: /\/api\/runs$/, body: [] }, { match: /\/api\/runs\/zzz/, status: 404, body: { detail: 'Run not found' } }])
+    mockFetch([...common, { match: /\/api\/runs(\?.*)?$/, body: [] }, { match: /\/api\/runs\/zzz/, status: 404, body: { detail: 'Run not found' } }])
     renderApp('#/runs/zzz')
     expect(await screen.findByText('Not found')).toBeTruthy()
     expect(screen.getByText('Back to all runs')).toBeTruthy()

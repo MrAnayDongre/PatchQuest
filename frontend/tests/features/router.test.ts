@@ -8,6 +8,7 @@ describe('hash router', () => {
     expect(parseHash('#/runs').name).toBe('runs')
     expect(parseHash('#/engines').name).toBe('engines')
     expect(parseHash('#/settings').name).toBe('settings')
+    expect(parseHash('#/metrics').name).toBe('metrics')
     expect(parseHash('#/extras').name).toBe('extras')
   })
 

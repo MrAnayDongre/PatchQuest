@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'settings' | 'extras' | 'not-found'
+export type RouteName = 'home' | 'runs' | 'run' | 'engines' | 'metrics' | 'settings' | 'extras' | 'not-found'
 
 export interface Route {
   name: RouteName
@@ -22,6 +22,7 @@ export function parseHash(hash: string): Route {
   if (first === 'runs' && !second) return { name: 'runs', params: {}, query }
   if (first === 'runs' && second && !third) return { name: 'run', params: { id: second }, query }
   if (first === 'engines' && !second) return { name: 'engines', params: {}, query }
+  if (first === 'metrics' && !second) return { name: 'metrics', params: {}, query }
   if (first === 'settings' && !second) return { name: 'settings', params: {}, query }
   if (first === 'extras' && !third) return { name: 'extras', params: second ? { section: second } : {}, query }
   return { name: 'not-found', params: {}, query }
@@ -40,6 +41,7 @@ export function buildHash(name: RouteName, params: Record<string, string> = {}, 
   if (name === 'runs') path = '/runs'
   else if (name === 'run') path = `/runs/${encodeURIComponent(params.id ?? '')}`
   else if (name === 'engines') path = '/engines'
+  else if (name === 'metrics') path = '/metrics'
   else if (name === 'settings') path = '/settings'
   else if (name === 'extras') path = params.section ? `/extras/${encodeURIComponent(params.section)}` : '/extras'
   const qs = new URLSearchParams(query).toString()

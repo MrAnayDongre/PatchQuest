@@ -10,7 +10,7 @@ export function appliedExplanation(input: {
 }): { tone: Tone; title: string; body: string } {
   const { status, outcome, verdict, rejectionReason } = input
   if (outcome === 'applied') return { tone: 'success', title: 'Applied to your repository', body: 'These are the files PatchQuest wrote.' }
-  if (status === 'running' || status === 'created' || status === 'waiting_approval' || status === 'cancel_requested') {
+  if (status === 'running' || status === 'created' || status === 'queued' || status === 'waiting_approval' || status === 'cancel_requested') {
     return { tone: 'info', title: 'Nothing applied yet', body: 'Your repository is only touched once, at the very end, after the checks pass.' }
   }
   if (outcome === 'read_only') return { tone: 'muted', title: 'Nothing to apply', body: 'This was a read-only task, so no changes were proposed.' }

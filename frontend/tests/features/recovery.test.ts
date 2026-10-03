@@ -50,7 +50,7 @@ describe('appliedExplanation', () => {
 })
 
 describe('new run form', () => {
-  const form: NewRunForm = { repoPath: '/home/me/app', task: 'Fix the login test', provider: 'openai', model: ' gpt-x ', runtime: 'docker', dryRun: true, baseUrl: '', workspaceId: '' }
+  const form: NewRunForm = { repoPath: '/home/me/app', task: 'Fix the login test', provider: 'openai', model: ' gpt-x ', runtime: 'docker', dryRun: true, baseUrl: '', workspaceId: '', overrides: '' }
   it('accepts a valid form', () => {
     expect(validateNewRun(form)).toEqual({})
   })
@@ -58,6 +58,12 @@ describe('new run form', () => {
     const e = validateNewRun({ ...form, repoPath: 'relative/path', task: 'hi', baseUrl: 'localhost' })
     expect(Object.keys(e).sort()).toEqual(['baseUrl', 'repoPath', 'task'])
     expect(validateNewRun({ ...form, repoPath: '' }).repoPath).toMatch(/Enter/)
+  })
+  it('validates and sends run settings overrides (agent.* only)', () => {
+    expect(validateNewRun({ ...form, overrides: 'safety.x=1' }).overrides).toMatch(/only agent/)
+    expect(validateNewRun({ ...form, overrides: 'agent.max_model_calls=80' })).toEqual({})
+    expect(buildCreateRequest({ ...form, overrides: 'agent.max_model_calls=80' }).overrides).toEqual({ 'agent.max_model_calls': 80 })
+    expect(buildCreateRequest(form).overrides).toBeUndefined()
   })
   it('builds the API request, dropping the model for the mock provider', () => {
     expect(buildCreateRequest(form)).toEqual({ repo_path: '/home/me/app', task: 'Fix the login test', provider: 'openai', runtime_mode: 'docker', dry_run: true, model: 'gpt-x' })

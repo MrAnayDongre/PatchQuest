@@ -72,7 +72,14 @@ const enc = encodeURIComponent
 
 // ---- runs
 export const createRun = (req: CreateRunRequest): Promise<Run> => request('/runs', { method: 'POST', body: req })
-export const listRuns = (signal?: AbortSignal): Promise<Run[]> => request('/runs', { signal })
+export const RUNS_PAGE = 200
+/** Newest first. `before` is the created_at of the oldest run already seen. */
+export function listRuns(signal?: AbortSignal, opts: { limit?: number; before?: string } = {}): Promise<Run[]> {
+  const params = new URLSearchParams()
+  params.set('limit', String(opts.limit ?? RUNS_PAGE))
+  if (opts.before) params.set('before', opts.before)
+  return request(`/runs?${params.toString()}`, { signal })
+}
 export const getRun = (runId: string, signal?: AbortSignal): Promise<Run> => request(`/runs/${enc(runId)}`, { signal })
 export const getRunEvents = (runId: string, afterId = 0, signal?: AbortSignal): Promise<RunEvent[]> =>
   request(`/runs/${enc(runId)}/events${afterId ? `?after_id=${afterId}` : ''}`, { signal })
@@ -121,6 +128,50 @@ export const getLineage = (runId: string, signal?: AbortSignal): Promise<Lineage
 export const getCheckpoints = (runId: string, signal?: AbortSignal): Promise<CheckpointSummary[]> =>
   request(`/runs/${enc(runId)}/checkpoints`, { signal })
 export const getBudget = (runId: string, signal?: AbortSignal): Promise<BudgetEntry[]> => request(`/runs/${enc(runId)}/budget`, { signal })
+
+// ---- metrics
+export interface Percentiles {
+  p50: number | null
+  p95: number | null
+  count?: number
+}
+export interface MetricsBlock {
+  runs: number
+  finished: number
+  by_status: Record<string, number>
+  by_outcome: Record<string, number>
+  task_success_rate: number | null
+  validation_pass_rate: number | null
+  first_pass_success_rate: number | null
+  resume_success_rate: number | null
+  runs_resumed: number
+  failure_distribution: Record<string, number>
+  approval_latency_s: Percentiles
+  time_to_completion_s: Percentiles
+  tokens: { total: number; prompt: number; completion: number; per_success: number | null }
+  cost: { total: number | null; per_success: number | null; currency: string | null }
+  human_interventions: number
+  provider_failovers: number
+  [key: string]: unknown
+}
+export interface ModelLatency {
+  provider: string
+  model: string
+  calls: number
+  error_rate: number | null
+  latency_ms: Percentiles
+}
+export interface MetricsResponse {
+  window: { since: string | null; until: string | null }
+  totals: MetricsBlock
+  models: ModelLatency[]
+  groups?: Record<string, MetricsBlock>
+}
+export function getMetrics(window: string, groupBy: string | null, signal?: AbortSignal): Promise<MetricsResponse> {
+  const params = new URLSearchParams({ window })
+  if (groupBy) params.set('group_by', groupBy)
+  return request(`/metrics?${params.toString()}`, { signal })
+}
 
 // ---- reports
 export const getReport = (runId: string, signal?: AbortSignal): Promise<FinalReport> => request(`/reports/${enc(runId)}`, { signal })

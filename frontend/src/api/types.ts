@@ -1,5 +1,6 @@
 export type RunStatus =
   | 'created'
+  | 'queued'
   | 'running'
   | 'waiting_approval'
   | 'cancel_requested'
@@ -110,6 +111,7 @@ export interface CreateRunRequest {
   dry_run?: boolean
   base_url?: string
   workspace_id?: string
+  overrides?: Record<string, number | string | boolean>
 }
 
 export interface ProviderInfo {
@@ -138,6 +140,7 @@ export interface PendingApproval {
   phase: string | null
   expires_at: string | null
   created_at: string
+  grantable?: boolean
 }
 
 export type ApprovalDecisionKind = 'APPROVE_ONCE' | 'APPROVE_FOR_RUN' | 'DENY' | 'MODIFY' | 'CANCEL_RUN'

@@ -98,7 +98,8 @@ export function shortId(id: string): string {
 
 /** "waiting_approval" -> "Waiting approval". */
 export function humanize(token: string): string {
-  const spaced = token.replace(/[_-]+/g, ' ').trim()
+  const base = token === token.toUpperCase() ? token.toLowerCase() : token
+  const spaced = base.replace(/[_-]+/g, ' ').trim()
   return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : ''
 }
 

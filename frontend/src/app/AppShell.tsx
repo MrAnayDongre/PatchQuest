@@ -9,6 +9,7 @@ import EnginesPage from '../features/EnginesPage'
 import HomePage from '../features/home/HomePage'
 import RunPage from '../features/run/RunPage'
 import RunsPage from '../features/runs/RunsPage'
+import MetricsPage from '../features/MetricsPage'
 import SettingsPage from '../features/SettingsPage'
 import { buildHash, navigate, useRoute, type RouteName } from '../lib/router'
 import { useTheme } from '../theme/ThemeProvider'
@@ -22,6 +23,7 @@ const NAV: { name: RouteName; label: string; icon: IconName; hash: string }[] = 
   { name: 'home', label: 'Home', icon: 'home', hash: buildHash('home') },
   { name: 'runs', label: 'Runs', icon: 'runs', hash: buildHash('runs') },
   { name: 'engines', label: 'Engines', icon: 'engine', hash: buildHash('engines') },
+  { name: 'metrics', label: 'Metrics', icon: 'clock', hash: buildHash('metrics') },
   { name: 'settings', label: 'Settings', icon: 'settings', hash: buildHash('settings') },
   { name: 'extras', label: 'Extras', icon: 'extras', hash: buildHash('extras') },
 ]
@@ -131,6 +133,7 @@ function Shell() {
     else if (a === 'go-home') navigate(buildHash('home'))
     else if (a === 'go-runs') navigate(buildHash('runs'))
     else if (a === 'go-engines') navigate(buildHash('engines'))
+    else if (a === 'go-metrics') navigate(buildHash('metrics'))
     else if (a === 'go-settings') navigate(buildHash('settings'))
     else if (a === 'go-extras') navigate(buildHash('extras'))
   }, app.paletteOpen)
@@ -147,6 +150,7 @@ function Shell() {
     case 'runs': page = <RunsPage />; break
     case 'run': page = <RunPage key={route.params.id} runId={route.params.id} tab={route.query.tab} />; break
     case 'engines': page = <EnginesPage />; break
+    case 'metrics': page = <MetricsPage />; break
     case 'settings': page = <SettingsPage />; break
     case 'extras': page = <Page><ExtrasPage section={route.params.section} /></Page>; break
     default:

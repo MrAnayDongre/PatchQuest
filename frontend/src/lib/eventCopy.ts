@@ -29,7 +29,8 @@ export interface EventCopy {
 }
 
 const STATUS_COPY: Record<RunStatus, string> = {
-  created: 'Queued',
+  created: 'Starting',
+  queued: 'Waiting for a worker',
   running: 'Running',
   waiting_approval: 'Waiting for approval',
   cancel_requested: 'Cancelling',
@@ -182,7 +183,9 @@ export function describeEvent(e: RunEvent): EventCopy {
     case 'run_state_changed': {
       const from = str(p.from)
       const to = str(p.to) ?? e.status ?? ''
+      if (to === 'queued') return make('system', 'info', 'Waiting for a worker', msg)
       if (to === 'waiting_approval') return make('system', 'warning', 'Waiting for your approval', msg)
+      if (to === 'running' && from === 'queued') return make('system', 'info', 'A worker picked it up', msg)
       if (to === 'running' && from === 'created') return make('system', 'info', 'Run started', msg)
       if (to === 'running' && from === 'waiting_approval') return make('system', 'info', 'Back to work', msg)
       if (to === 'running' && from === 'interrupted') return make('system', 'info', 'Resumed', msg)
@@ -380,6 +383,7 @@ export function statusTone(status: string | null | undefined): Tone {
   switch (status) {
     case 'running':
     case 'created':
+    case 'queued':
       return 'info'
     case 'waiting_approval':
     case 'interrupted':
