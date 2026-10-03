@@ -261,6 +261,15 @@ def _integrations(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _index_incremental(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "repo_files", {"mtime_ns": "BIGINT"})
+    # Every run used to append the whole symbol list again: keep one row per symbol, then forbid duplicates.
+    conn.execute("DELETE FROM repo_symbols WHERE id NOT IN (SELECT MIN(id) FROM repo_symbols "
+                 "GROUP BY repo_path, file_path, symbol_type, name, line_start, parent)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON repo_symbols"
+                 "(repo_path, file_path, symbol_type, name, (COALESCE(line_start, -1)), (COALESCE(parent, '')))")
+
+
 MIGRATIONS = [
     Migration(1, "baseline schema", _baseline),
     Migration(2, "versioned immutable event ledger", _ledger),
@@ -277,4 +286,5 @@ MIGRATIONS = [
     Migration(13, "scoped, provenance-aware memories", _memories),
     Migration(14, "teams, projects and tenant-owned repositories", _tenancy),
     Migration(15, "integrations and encrypted secrets", _integrations),
+    Migration(16, "incremental repository index (and de-duplicated symbols)", _index_incremental),
 ]

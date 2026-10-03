@@ -616,9 +616,11 @@ class RunStateMachine:
     async def _phase_repo_scan(self) -> None:
         from patchquest.memory.repo_indexer import index_repo
         await self._emit("repo_scan_started", phase="repo_scan", message="Scanning repository")
-        await asyncio.to_thread(index_repo, self.ctx.repo_path)
+        scan = await asyncio.to_thread(index_repo, self.ctx.repo_path)
         await self._adapt()
-        await self._emit("repo_scan_completed", phase="repo_scan", message="Repo scan complete")
+        await self._emit("repo_scan_completed", phase="repo_scan", message="Repo scan complete",
+                         payload={k: scan.get(k) for k in ("files_indexed", "files_reprocessed", "files_removed", "symbols_reprocessed",
+                                                            "cache_hit_rate", "elapsed_ms")})
 
     async def _adapt(self) -> None:
         """Detect what changed in the repository since last time and choose what to remember for this task. Never fatal."""

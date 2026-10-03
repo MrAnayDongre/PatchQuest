@@ -33,6 +33,15 @@ REASON_TEST_RELATION = "test_relation"
 REASON_STACKTRACE = "stacktrace_match"
 
 
+# Named selection strategies (``agent.context_strategy``). "lexical" is the long-standing behaviour. "focused" drops
+# weakly evidenced candidates (below a quarter of the best score) and attaches tests only to the two best sources:
+# on the evaluation fixture it keeps recall and removes about a fifth of the tokens (see docs/evaluation.md).
+STRATEGIES: dict[str, dict[str, float | int | None]] = {
+    "lexical": {},
+    "focused": {"relative_cutoff": 0.25, "tests_for_top": 2},
+}
+
+
 @dataclass
 class ContextItem:
     path: str
@@ -92,8 +101,21 @@ def build_context(
     budget_tokens: int = 6000,
     per_file_chars: int = 8000,
     max_files: int = 8,
+    relative_cutoff: float = 0.0,
+    tests_for_top: int | None = None,
+    strategy: str | None = None,
 ) -> list[ContextItem]:
-    """Select and read the files most likely to matter for ``task`` within a token budget."""
+    """Select and read the files most likely to matter for ``task`` within a token budget.
+
+    ``relative_cutoff`` (0 = off) drops candidates whose score is below that fraction of the best score, unless the
+    evidence is explicit (the user named the file, the planner asked for it, a traceback names it, or it is the test of
+    a kept file). ``tests_for_top`` limits "tests that correspond to selected sources" to the top N sources.
+    """
+    if strategy is not None:
+        if strategy not in STRATEGIES:
+            raise ValueError(f"unknown context strategy '{strategy}' (one of: {', '.join(STRATEGIES)})")
+        relative_cutoff = float(STRATEGIES[strategy].get("relative_cutoff") or relative_cutoff)
+        tests_for_top = STRATEGIES[strategy].get("tests_for_top", tests_for_top)  # type: ignore[assignment]
     repo_map = repo_map or {"files": [], "symbols": []}
     known = {f["file_path"] for f in repo_map.get("files", [])}
     scores: dict[str, ContextItem] = {}
@@ -140,7 +162,8 @@ def build_context(
                 bump(path, 4 * min(len(sym_hits), 5), REASON_SYMBOL_MATCH)
 
     # 4. Tests that correspond to selected sources.
-    for path in list(scores):
+    sources = sorted(scores, key=lambda p: (-scores[p].score, p))
+    for path in sources[:tests_for_top] if tests_for_top is not None else sources:
         stem = Path(path).stem
         for cand in known:
             name = Path(cand).name
@@ -148,6 +171,10 @@ def build_context(
                 bump(cand, 8, REASON_TEST_RELATION)
 
     ranked = sorted(scores.values(), key=lambda i: (-i.score, i.path))
+    if relative_cutoff > 0 and ranked:
+        explicit = {REASON_USER_REFERENCE, REASON_PLANNED, REASON_STACKTRACE, REASON_TEST_RELATION}
+        floor = ranked[0].score * relative_cutoff
+        ranked = [i for i in ranked if i.score >= floor or explicit & set(i.reasons)]
     selected: list[ContextItem] = []
     remaining = budget_tokens * CHARS_PER_TOKEN
     for item in ranked:

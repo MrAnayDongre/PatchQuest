@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -197,6 +197,8 @@ class AgentConfig(BaseModel):
     structured_output: str = "auto"
     # One extra call, with the validation error, when a reply does not match the role's schema.
     format_repair_attempts: int = 1
+    # How files are chosen for the model: "lexical" (default) or "focused" (fewer, better-evidenced files).
+    context_strategy: Literal["lexical", "focused"] = "lexical"
     # Persist prompts and responses (needed for replay). Disable if prompts must not be stored.
     record_model_io: bool = True
 

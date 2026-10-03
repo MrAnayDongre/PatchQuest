@@ -434,7 +434,7 @@ async def run_context_builder(ctx: RunContext) -> dict[str, Any]:
     from patchquest.memory.repo_map import get_repo_map
 
     planned = list(ctx.selected_files or [])
-    items = build_context(ctx.repo_path, ctx.task, get_repo_map(ctx.repo_path), planned)
+    items = build_context(ctx.repo_path, ctx.task, get_repo_map(ctx.repo_path), planned, strategy=get_config().agent.context_strategy)
     return {
         "selected_files": [i.path for i in items],
         "context": {i.path: i.content for i in items},
@@ -506,7 +506,7 @@ async def run_repair_role(ctx: RunContext, failures: list[dict[str, Any]], works
     failure_text = "\n\n".join(describe(f) for f in failures)
     items = build_context(
         workspace_path, ctx.task, get_repo_map(ctx.repo_path), list(ctx.applied_files or []),
-        failure_text=failure_text, budget_tokens=5000,
+        failure_text=failure_text, budget_tokens=5000, strategy=get_config().agent.context_strategy,
     )
     user_content = (
         f"Task: {ctx.task}\nRepair attempt {attempt}.\n\n"

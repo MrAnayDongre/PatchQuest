@@ -64,3 +64,35 @@ baseline for improvement, not a ranking.
 
 Context-quality metrics (relevant-file recall, irrelevant-context ratio), a provider benchmark with cost, parallel rollouts across
 machines, and a 'long-horizon workflow' task class.
+
+## Context quality and incremental indexing
+
+`patchquest eval context` scores how well the files shown to a model match what a person would need, with no model and no
+GPU: a 42-file synthetic repository (packages with overlapping vocabulary, two modules with the same job, tests beside code,
+a TypeScript front end, docs that mention everything) and 12 tasks, each with its ground-truth files and symbols
+(`evaluation/context_fixture`). Metrics: **file recall**, **symbol recall** (the definition is in the selected text),
+**precision**, **irrelevant-context ratio** (characters read for nothing), tokens, and selection latency.
+
+Measured on the shipped strategies (one laptop, Python 3.12; raw numbers in `docs/evals/context-quality-baseline.json`):
+
+| Strategy | file recall | symbol recall | precision | irrelevant | mean tokens |
+|---|---|---|---|---|---|
+| `lexical` (default) | 89% | 88% | 54% | 34% | 160 |
+| `focused` (`agent.context_strategy: focused`) | 89% | 88% | 69% | 20% | 130 |
+
+`focused` drops candidates scoring under a quarter of the best and attaches tests only to the two best sources. On this
+fixture that kept recall in every case (0 worse, paired) and cut about a fifth of the tokens. **It is not the default**: 12 cases
+on a synthetic repository are evidence that it is worth trying, not proof it is better on your code - compare with
+`patchquest eval experiment --baseline agent.context_strategy=lexical --candidate agent.context_strategy=focused` on real tasks.
+The sweep behind the choice (cutoff 0.25-0.7) trades recall for precision monotonically; 0.25 was the last point with no recall loss.
+
+**Known miss, reported not hidden:** the `decimals` case ("amounts are displayed with one decimal") shares no word with the file
+or symbol names, so lexical selection finds nothing. Closing that gap needs semantic retrieval, which would be justified by this
+number, not assumed.
+
+**Index.** The repository index is incremental: unchanged files (same size and timestamp) are not read, touched-but-identical files
+are not re-parsed, changed files' symbols are replaced, deleted files leave the index. On the fixture: cold 5 ms; unchanged
+re-index 1.3 ms with 0 files reprocessed; after 3 edits + 2 deletions + 2 additions 3.3 ms with 5 of 42 files reprocessed
+(88% cache hits); the share of index entries that no longer matched the disk went from 12% to 0%. (Before this work every run
+appended its symbols again - the table grew without bound - and deleted files stayed indexed; migration 16 removes the duplicates.)
+Timings are for a tiny repository; they show what is reused, not how a large monorepo behaves.

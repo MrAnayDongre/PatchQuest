@@ -887,6 +887,29 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     if args.eval_cmd in ("recovery", "matrix", "experiment", "gate"):
         return _eval_extended(args)
 
+    if args.eval_cmd == "context":
+        from patchquest.evaluation.context_quality import STRATEGIES, evaluate
+
+        try:
+            ctx_report = evaluate(tuple(args.strategy or STRATEGIES), args.repetitions)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        if args.out:
+            Path(args.out).write_text(json.dumps(ctx_report, indent=2) + "\n")
+        if args.json:
+            _emit_json(ctx_report)
+            return EXIT_OK
+        print(f"{ctx_report['cases']} cases on a {ctx_report['fixture_files']}-file fixture")
+        for name, s in ctx_report["strategies"].items():
+            print(f"  {name:<8} file recall {s['relevant_file_recall']:.0%}  symbol recall {s['relevant_symbol_recall']:.0%}  precision {s['file_precision']:.0%}  "
+                  f"irrelevant {s['irrelevant_context_ratio']:.0%}  tokens {s['mean_tokens']:.0f}  latency p50 {s['build_latency_ms']['p50']}ms")
+        i = ctx_report["index"]
+        print(f"  index: cold {i['cold']['elapsed_ms']}ms, unchanged {i['unchanged']['elapsed_ms']}ms, after {i['changes_applied']} "
+              f"{i['incremental']['elapsed_ms']}ms ({i['incremental']['files_reprocessed']} of {i['files']} files reprocessed); "
+              f"stale {i['stale_index_rate']['before_refresh']:.0%} -> {i['stale_index_rate']['after_refresh']:.0%}")
+        return EXIT_OK
+
     def progress(r) -> None:
         if not args.json:
             print(f"{ICON['ok'] if r.status == 'success' else ICON['warn'] if r.status == 'partial' else ICON['fail']} "
@@ -1188,6 +1211,11 @@ def build_parser() -> argparse.ArgumentParser:
     er2.add_argument("--filter")
     er2.add_argument("--out")
     er2.add_argument("--json", action="store_true")
+    ectx = esub.add_parser("context", help="score context selection (recall, precision, tokens, latency) and incremental indexing; no model needed")
+    ectx.add_argument("--strategy", action="append", help="repeat to compare (default: all)")
+    ectx.add_argument("--repetitions", type=int, default=7)
+    ectx.add_argument("--out")
+    ectx.add_argument("--json", action="store_true")
     em = esub.add_parser("matrix", help="the corpus against several provider:model targets")
     em.add_argument("--target", action="append", required=True, metavar="PROVIDER[:MODEL][@BASE_URL]")
     em.add_argument("--corpus")
