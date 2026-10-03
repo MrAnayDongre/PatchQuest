@@ -119,6 +119,57 @@ async def test_a_worker_that_loses_its_lease_goes_quiet_and_leaves_the_run_to_it
     assert (repo / "calc.py").read_text() == CALC_BUG
 
 
+@pytest.mark.asyncio
+async def test_a_zombie_worker_that_never_noticed_losing_its_lease_cannot_write_to_the_run(tmp_path):
+    """The window the heartbeat alone leaves open: the old worker has not yet noticed (its heartbeat is slow), the run has
+    a new owner, and the old execution wakes up and carries on. Its transactions are fenced by lease epoch and roll back."""
+    repo = make_calc_repo(tmp_path / "r")
+    started, resume = asyncio.Event(), asyncio.Event()
+
+    async def stalled_planner(_m):
+        started.set()
+        await resume.wait()  # the worker is "paused" (a long GC, a frozen VM, a network partition) past its lease
+        return PLAN
+
+    script("zombie-model", planner=[stalled_planner])
+    run_id = queued_run(repo, "zombie-model")
+    old = Worker(TaskService(), worker_id="zombie", lease_s=30, heartbeat_every=300)  # it will not heartbeat during this test
+    work = asyncio.create_task(old.run_once())
+    await started.wait()
+    with get_db() as conn:  # another worker takes the run over
+        conn.execute("UPDATE runs SET lease_owner = 'new-owner', lease_epoch = lease_epoch + 1 WHERE id = ?", (run_id,))
+        before = conn.execute("SELECT COUNT(*) FROM run_events WHERE run_id = ?", (run_id,)).fetchone()[0]
+        checkpoints_before = conn.execute("SELECT COUNT(*) FROM checkpoints WHERE run_id = ?", (run_id,)).fetchone()[0]
+    resume.set()  # the zombie wakes and tries to carry on
+    await asyncio.wait_for(work, timeout=20)
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM run_events WHERE run_id = ?", (run_id,)).fetchone()[0] == before
+        assert conn.execute("SELECT COUNT(*) FROM checkpoints WHERE run_id = ?", (run_id,)).fetchone()[0] == checkpoints_before
+    row = run_row(run_id)
+    assert row["status"] == "running" and row["lease_owner"] == "new-owner"  # untouched: the new owner's to write
+    assert (repo / "calc.py").read_text() == CALC_BUG
+
+
+def test_a_fenced_transaction_rolls_back_once_the_lease_has_moved(tmp_path):
+    from patchquest.database import LeaseLost, fenced
+    from patchquest.runtime import queue
+    run_id = queued_run(make_calc_repo(tmp_path / "r"), "fence-model")
+    claim = queue.claim("w1", 30)
+    assert claim is not None
+    with fenced(run_id, "w1", claim.epoch):
+        with get_db() as conn:
+            ledger.append(conn, run_id, "while_owner")
+    with get_db() as conn:  # the takeover, by someone who is not fenced
+        conn.execute("UPDATE runs SET lease_owner = 'w2', lease_epoch = lease_epoch + 1 WHERE id = ?", (run_id,))
+    with fenced(run_id, "w1", claim.epoch):
+        with pytest.raises(LeaseLost):
+            with get_db() as conn:
+                ledger.append(conn, run_id, "after_takeover")
+    with get_db() as conn:
+        types = [e["type"] for e in ledger.read(conn, run_id)]
+    assert "while_owner" in types and "after_takeover" not in types
+
+
 CHILD = textwrap.dedent("""
     import asyncio, json, os, signal, sys
     from patchquest.agents.providers_scripted import ScriptedProvider

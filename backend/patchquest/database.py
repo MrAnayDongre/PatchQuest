@@ -6,6 +6,7 @@ import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -145,6 +146,39 @@ def serialize(conn: Any, key: str) -> None:
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (key,))
 
 
+class LeaseLost(RuntimeError):
+    """This worker no longer owns the run (its lease expired and the run was given to another worker)."""
+
+
+_FENCE: ContextVar[tuple[str, str, int] | None] = ContextVar("patchquest_fence", default=None)
+
+
+@contextmanager
+def fenced(run_id: str, owner: str, epoch: int) -> Generator[None, None, None]:
+    """Everything that writes to the database in this context (including tasks started in it) commits only while
+    ``owner`` still holds the lease on ``run_id`` at ``epoch``. A worker that stalled past its lease and was replaced
+    therefore cannot add events, checkpoints or state to a run that now belongs to someone else: its transaction is
+    rolled back with ``LeaseLost``. (Files it already touched are covered by the promotion journal.)"""
+    token = _FENCE.set((run_id, owner, epoch))
+    try:
+        yield
+    finally:
+        _FENCE.reset(token)
+
+
+def _check_fence(conn: Any) -> None:
+    fence = _FENCE.get()
+    if fence is None:
+        return
+    run_id, owner, epoch = fence
+    # PostgreSQL: FOR SHARE keeps a competing claim's UPDATE waiting until this transaction ends, so the check
+    # cannot be overtaken between here and the commit. SQLite: the write lock already excludes it.
+    row = conn.execute("SELECT 1 FROM runs WHERE id = ? AND lease_owner = ? AND lease_epoch = ?" + (" FOR SHARE" if getattr(conn, "dialect", "") == "postgresql" else ""),
+                       (run_id, owner, epoch)).fetchone()
+    if row is None:
+        raise LeaseLost(f"worker {owner} no longer holds run {run_id}")
+
+
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
     target = postgres_target()
@@ -153,6 +187,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
 
         with dbpg.connect(*target) as pg:
             yield pg  # type: ignore[misc]
+            _check_fence(pg)
         return
     conn = sqlite3.connect(str(get_db_path()), timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
@@ -162,6 +197,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
     try:
         yield conn
+        _check_fence(conn)
         conn.commit()
     except Exception:
         conn.rollback()

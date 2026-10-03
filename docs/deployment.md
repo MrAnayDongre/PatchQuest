@@ -5,7 +5,7 @@
 | **A. Local** | one process on a laptop: `patchquest run`, or `patchquest serve` + UI. SQLite in `~/.patchquest`. | implemented, tested |
 | **B. Single host, queued** | API container(s) + worker container(s) sharing one SQLite volume. Runs survive a worker crash. | implemented, tested (real SIGKILL, real containers) |
 | **C. Team server (PostgreSQL)** | PostgreSQL + API + workers on one or several hosts that can reach the database. | implemented; **whole test suite passes on PostgreSQL 16**; containers not yet exercised end to end (see below) |
-| **D. At scale** | object storage for artifacts, SSO, per-tenant quotas, TLS, lease-fenced writes | **not implemented** |
+| **D. At scale** | object storage for artifacts, SSO, per-tenant quotas, TLS | **not implemented** |
 
 Use the words precisely: mode B is *tested* and *load-tested at the control-plane level* ([benchmarks](benchmarks.md)); nothing
 here is validated for "thousands of teams" beyond those measurements.
@@ -52,7 +52,7 @@ patchquest worker                                      # run on as many hosts as
 
 - **One code path.** SQLite and PostgreSQL run the same persistence code; `dbpg.py` translates the few dialect
   differences (placeholders, `OR IGNORE`, identity columns, the append-only triggers, `lastrowid`). Local mode is
-  unchanged. **Evidence:** the full backend suite (1690 tests, including real SIGKILL of API and worker processes and
+  unchanged. **Evidence:** the full backend suite (1692 tests, including real SIGKILL of API and worker processes and
   tenant-isolation tests) passes on PostgreSQL 16 in a per-test schema; the 8 skipped tests exercise SQLite files
   directly (backup/restore of a database file, legacy-file upgrade). `tests/server/` adds the multi-process
   properties: 40 queued runs claimed by 8 concurrent workers exactly once each (`FOR UPDATE SKIP LOCKED`), a dead
@@ -64,8 +64,10 @@ patchquest worker                                      # run on as many hosts as
   COMMITTED); state changes are compare-and-set (`UPDATE ... WHERE status = ?`), so concurrent writers cannot both win.
 - **Backups:** use PostgreSQL's own tools - `pg_dump -Fc "$PATCHQUEST_DATABASE_URL" > pq.dump`, restore with
   `pg_restore -d <empty db>`. `patchquest backup` refuses on PostgreSQL and says so. Back up repositories separately.
-- **Not done:** write fencing by lease epoch (a worker that lost its lease can still write until its next heartbeat),
-  read replicas, connection-pool sizing guidance (the pool is 20 per process), and any measurement of control-plane
+- **Fencing:** a worker's database writes commit only while it still holds the run's lease at its epoch, so a paused
+  worker that wakes up after another took over cannot add events, checkpoints or state (tested, with the fence
+  disabled the test fails). A command already running when the lease moves can finish; its record is discarded.
+- **Not done:** read replicas, connection-pool sizing guidance (the pool is 20 per process), and any measurement of control-plane
   throughput on PostgreSQL (the published numbers in [benchmarks](benchmarks.md) are SQLite on one host).
 
 ## Probes
@@ -86,5 +88,5 @@ refused. Upgrade = back up, replace the image, start; roll back = restore. On Po
 
 ## What is not here
 
-S3-compatible artifact storage, OIDC/SSO, per-tenant quotas, a TLS terminator, Kubernetes manifests, lease-epoch write
-fencing, PostgreSQL performance numbers.
+S3-compatible artifact storage, OIDC/SSO, per-tenant quotas, a TLS terminator, Kubernetes manifests, PostgreSQL
+performance numbers.

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from patchquest import __version__
 from patchquest.config import config_overrides, get_config, validate_overrides
-from patchquest.database import get_db, now_iso
+from patchquest.database import LeaseLost, get_db, now_iso
 from patchquest.domain import budget
 from patchquest.domain.approvals import STATUS_FOR, ApprovalStatus, Decision
 from patchquest.domain.effects import GRANTABLE, SideEffect
@@ -262,6 +262,10 @@ class RunStateMachine:
                 await self._fail_run("Run cancelled", status="cancelled")
                 return
             await self._complete_run()
+        except LeaseLost:
+            self.abandon()  # another worker owns the run now; whatever it writes is the truth, and we write nothing
+            logger.warning("run %s: lease lost mid-write; this execution stops", self.run_id)
+            return
         except Exception as e:
             logger.error(f"Run {self.run_id} crashed: {e}\n{traceback.format_exc()}")
             self._failure = self._failure or classify(e)

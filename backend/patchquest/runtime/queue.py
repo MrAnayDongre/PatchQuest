@@ -9,9 +9,11 @@
 * ``release``   give a finished run's lease back.
 
 Every claim bumps ``lease_epoch``. A worker that stalled past its lease and was replaced can still be running
-code: it learns this at its next heartbeat and abandons the run (``RunStateMachine.abandon``). Until then
-two executions can overlap for at most one heartbeat interval; fencing every write by epoch would close that
-window and is not implemented. For PostgreSQL the claim would use ``FOR UPDATE SKIP LOCKED``.
+code: its next heartbeat tells it (``RunStateMachine.abandon``), and until then every database write it makes is
+*fenced* (``database.fenced``): the transaction checks, before committing, that this worker still holds the run at
+this epoch, and rolls back with ``LeaseLost`` otherwise. Side effects outside the database are covered by the
+promotion journal, and a command already running when the lease moved can finish; nothing it records is kept.
+On PostgreSQL the claim uses ``FOR UPDATE SKIP LOCKED`` and the fence check takes ``FOR SHARE``.
 """
 
 from __future__ import annotations
@@ -20,16 +22,14 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from patchquest.database import get_db, is_postgres, lock_rows
+from patchquest.database import LeaseLost, get_db, is_postgres, lock_rows
 from patchquest.domain.runs import RunStatus
 from patchquest.persistence import ledger
 from patchquest.persistence.runs import transition
 
+__all__ = ["Claim", "LeaseLost", "claim", "enqueue", "heartbeat", "release", "stats"]
+
 LIVE = (RunStatus.RUNNING.value, RunStatus.WAITING_APPROVAL.value, RunStatus.CANCEL_REQUESTED.value)
-
-
-class LeaseLost(RuntimeError):
-    """This worker no longer owns the run (its lease expired and the run was given to another worker)."""
 
 
 @dataclass(frozen=True)

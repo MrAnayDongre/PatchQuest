@@ -16,7 +16,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from patchquest.application.service import TaskService
-from patchquest.database import get_db
+from patchquest.database import fenced, get_db
 from patchquest.persistence import identity as ids
 from patchquest.runtime import queue
 from patchquest.runtime.resume import NotResumable
@@ -62,7 +62,8 @@ class Worker:
             logger.warning("run %s needs a decision before it can resume: %s", claim.run_id, exc)
 
     async def _execute(self, claim: queue.Claim) -> None:
-        task = self.service.start_claimed(claim.run_id)
+        with fenced(claim.run_id, self.id, claim.epoch):  # the run's task inherits this: its writes commit only while we own it
+            task = self.service.start_claimed(claim.run_id)
         owned = True
         try:
             while not task.done():
