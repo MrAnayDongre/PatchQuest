@@ -391,3 +391,21 @@ def test_plain_test_layouts_are_detected(tmp_path):
     empty = tmp_path / "nothing"
     empty.mkdir()
     assert detect_test_commands(str(empty)) == []
+
+
+class TestIndentationTolerance:
+    def test_dedented_search_matches_and_replacement_is_reindented(self):
+        from patchquest.patching.edits import SearchReplace, apply_search_replace
+
+        text = "def f():\n    if x:\n        return 1\n    return 2\n"
+        edit = SearchReplace("f.py", "if x:\n    return 1", "if y:\n    return 3")
+        assert apply_search_replace(text, edit) == "def f():\n    if y:\n        return 3\n    return 2\n"
+
+    def test_ambiguous_indentation_insensitive_match_still_fails(self):
+        import pytest
+
+        from patchquest.patching.edits import EditError, SearchReplace, apply_search_replace
+
+        text = "def a():\n    return 1\ndef b():\n        return 1\n"
+        with pytest.raises(EditError):
+            apply_search_replace(text, SearchReplace("f.py", "return 1", "return 2"))

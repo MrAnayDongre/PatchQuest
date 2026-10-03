@@ -592,3 +592,18 @@ async def test_call_role_nvidia_context_uses_responses_api():
 
     assert isinstance(result, dict)
     assert result.get("task_type") == "code_change"
+
+
+def test_strip_reasoning_removes_think_blocks():
+    from patchquest.agents.providers_openai_compatible import strip_reasoning
+
+    assert strip_reasoning('<think>hmm</think>\n{"a": 1}') == '{"a": 1}'
+    assert strip_reasoning('{"a": 1}') == '{"a": 1}'
+    assert strip_reasoning("<think>ran out of budget") == ""
+
+
+def test_sglang_and_vllm_disable_thinking_others_do_not():
+    from patchquest.agents.providers_openai_compatible import LlamaCppProvider, SGLangProvider, VLLMProvider
+
+    assert SGLangProvider.extra_body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert VLLMProvider.extra_body == SGLangProvider.extra_body and not LlamaCppProvider.extra_body

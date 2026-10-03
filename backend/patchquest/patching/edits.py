@@ -49,10 +49,32 @@ def _rstrip_lines(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.split("\n"))
 
 
+def _indent(line: str) -> str:
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _match_ignoring_indent(text: str, edit: SearchReplace) -> str | None:
+    """Last resort: the search matches line-for-line once leading whitespace is ignored and it is
+    unambiguous. The replacement is re-indented from the model's indentation to the file's."""
+    needle = [ln.strip() for ln in edit.search.strip("\n").split("\n")]
+    if not any(needle):
+        return None
+    src = text.split("\n")
+    hits = [i for i in range(len(src) - len(needle) + 1) if [ln.strip() for ln in src[i : i + len(needle)]] == needle]
+    if len(hits) != 1:
+        return None
+    at = hits[0]
+    model_indent = _indent(edit.search.strip("\n").split("\n")[0])
+    file_indent = _indent(src[at])
+    new = edit.replace.strip("\n").split("\n") if edit.replace.strip("\n") else []
+    new = [file_indent + ln[len(model_indent):] if ln.startswith(model_indent) and ln.strip() else ln for ln in new]
+    return "\n".join(src[:at] + new + src[at + len(needle):])
+
+
 def apply_search_replace(text: str, edit: SearchReplace) -> str:
     """Return ``text`` with ``edit`` applied, or raise :class:`EditError`.
 
-    Matching order: exact; then ignoring trailing whitespace per line. The snippet must be
+    Matching order: exact; then ignoring trailing whitespace per line; then ignoring indentation (unique only). The snippet must be
     unique unless ``replace_all`` is set, so an under-specified edit fails instead of
     silently landing in the wrong place.
     """
@@ -71,6 +93,9 @@ def apply_search_replace(text: str, edit: SearchReplace) -> str:
     norm_text, norm_search = _rstrip_lines(text), _rstrip_lines(edit.search).strip("\n")
     count = norm_text.count(norm_search)
     if count == 0:
+        reindented = _match_ignoring_indent(text, edit)
+        if reindented is not None:
+            return reindented
         raise EditError(f"search block not found in {edit.path}: {edit.search[:120]!r}")
     if count > 1 and not edit.replace_all:
         raise EditError(f"search block matches {count} places in {edit.path}")

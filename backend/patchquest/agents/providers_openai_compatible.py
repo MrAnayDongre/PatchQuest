@@ -9,6 +9,7 @@ remembered per ``(base_url, model)`` so a known-unsupported feature is not retri
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -40,6 +41,8 @@ def _is_feature_rejection(resp: httpx.Response) -> bool:
 
 
 class OpenAICompatibleProvider(ProviderBase):
+    extra_body: dict[str, Any] = {}
+
     default_base_url: str | None = None
 
     def capabilities(self, config: ModelConfig) -> Capabilities:
@@ -73,6 +76,7 @@ class OpenAICompatibleProvider(ProviderBase):
         }
         if config.top_p is not None:
             body["top_p"] = config.top_p
+        body.update(self.extra_body)
 
         url = self._endpoint(config)
         feature = _feature_of(response_format)
@@ -98,7 +102,7 @@ class OpenAICompatibleProvider(ProviderBase):
 
         choice = data["choices"][0]
         return ProviderResponse(
-            content=choice["message"].get("content") or "",
+            content=strip_reasoning(choice["message"].get("content") or ""),
             usage=data.get("usage") or {},
             model=data.get("model", config.model),
             finish_reason=choice.get("finish_reason", "stop"),
@@ -112,6 +116,17 @@ class OpenAICompatibleProvider(ProviderBase):
         if not config.base_url and not self.default_base_url and not config.api_key_env:
             return False, "Either base_url or api_key_env required"
         return True, ""
+
+
+# Structured roles want the JSON, not a chain of thought that eats the token budget (Qwen3-style templates).
+_NO_THINKING: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": False}}
+_THINK = re.compile(r"<think>.*?</think>\s*", re.S)
+
+
+def strip_reasoning(text: str) -> str:
+    """Drop ``<think>`` blocks; an unterminated one means the budget ran out mid-thought."""
+    text = _THINK.sub("", text)
+    return text.split("<think>", 1)[0] if "<think>" in text else text
 
 
 class LocalEngineProvider(OpenAICompatibleProvider):
@@ -130,10 +145,12 @@ class LocalEngineProvider(OpenAICompatibleProvider):
 
 class VLLMProvider(LocalEngineProvider):
     engine, default_base_url = "vllm", "http://localhost:8000/v1"
+    extra_body = _NO_THINKING
 
 
 class SGLangProvider(LocalEngineProvider):
     engine, default_base_url = "sglang", "http://localhost:30000/v1"
+    extra_body = _NO_THINKING
 
 
 class LlamaCppProvider(LocalEngineProvider):
