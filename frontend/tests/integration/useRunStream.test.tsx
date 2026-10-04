@@ -123,6 +123,21 @@ describe('useRunStream', () => {
     expect(result.current.state.statusReason).toBe('process stopped')
   })
 
+  it('follows a run again when a worker resumes it right after an interruption', async () => {
+    mockFetch([
+      { match: /\/api\/runs\/r1$/, body: run('running') },
+      { match: /\/events/, body: all.slice(0, 5) },
+    ])
+    const { result } = renderHook(() => useRunStream('r1'))
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1))
+    act(() => {
+      FakeEventSource.last.open()
+      FakeEventSource.last.emit(ev(100, 'run_interrupted', { message: 'worker worker-1 stopped renewing its lease' }))
+    })
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(2))  // the run is already running again
+    expect(result.current.state.status).toBe('interrupted')
+  })
+
   it('reports a missing run as an error', async () => {
     mockFetch([{ match: /\/api\/runs\/r1/, status: 404, body: { detail: 'Run not found' } }])
     const { result } = renderHook(() => useRunStream('r1'))

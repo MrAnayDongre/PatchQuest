@@ -79,7 +79,20 @@ export function useRunStream(runId: string): RunStream {
             flushNow()
             closeStream.current?.()
             setConnection('ended')
-            void refreshRun()
+            void (async () => {
+              try {
+                const fresh = await getRun(runId)
+                if (gen !== generation.current) return
+                setRun(fresh)
+                // A worker can interrupt and resume a run within a moment: follow it again from the last event.
+                if (event.type === 'run_interrupted' && fresh.status !== 'interrupted') {
+                  setConnection('loading')
+                  connect(gen)
+                }
+              } catch {
+                // the page still shows what the ledger held
+              }
+            })()
             return
           }
           if (event.type === 'run_state_changed') void refreshRun()

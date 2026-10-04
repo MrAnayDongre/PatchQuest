@@ -82,5 +82,29 @@ async def test_live_stream_has_no_duplicates_or_gaps(repo):
     assert [e["id"] for e in svc.events(run["id"])] == ids  # and nothing missing
 
 
+@pytest.mark.asyncio
+async def test_stream_follows_events_written_by_another_process(repo):
+    """A worker is a separate process: its events reach the ledger but never this process's event bus."""
+    from patchquest.database import get_db
+    from patchquest.persistence import ledger
+
+    svc = TaskService()
+    run = svc.create_run(repo_path=str(repo), task=READ_ONLY)
+    seen = []
+
+    async def follow():
+        async for e in svc.stream(run["id"]):
+            if e["type"] != "ping":
+                seen.append(e["type"])
+
+    task = asyncio.create_task(follow())
+    await asyncio.sleep(0.2)
+    with get_db() as conn:  # what a worker process does: append to the ledger directly
+        ledger.append(conn, run["id"], "phase_started", actor="worker-1", message="from another process")
+        ledger.append(conn, run["id"], "run_completed", actor="worker-1", message="done")
+    await asyncio.wait_for(task, timeout=5)
+    assert seen[-2:] == ["phase_started", "run_completed"]
+
+
 async def _collect(svc, run_id):
     return [e async for e in svc.stream(run_id) if e["type"] != "ping"]

@@ -108,6 +108,10 @@ Demo banner on every page (simulated parts are stated), sandboxes kept in the de
 repeatable trigger, fork-demo model, crash demo reports its own evidence, plain-language names (`repository write risk`, `recorded answers`, `this machine`, `GitHub`, `test commands`), a focus ring that framed the whole page,
 `%` in SQL literals and `INSERT OR REPLACE` on PostgreSQL, a games card layout.
 
+## Found while filming the recovery in the real UI
+
+Capturing a real SIGKILL and recovery in the browser exposed two worker-mode defects, now fixed with tests: the run page's event stream only listened to the API process's own event bus, so a run executed by a separate worker process never updated live (the stream now also reads the ledger); and a run that was interrupted and resumed within a moment stranded the page on its last events (the page now follows it again). A restarted demo also kept stale references and reused webhook delivery ids; both fixed.
+
 ## Known limitations, stated as they are
 
 | Item | Status |

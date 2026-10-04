@@ -435,13 +435,24 @@ class TaskService:
                     return
             if self.get_run(run_id)["status"] in TERMINAL_STATUSES:
                 return
+            quiet = 0.0
             while True:
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=heartbeat)
+                    event = await asyncio.wait_for(queue.get(), timeout=min(heartbeat, FOLLOW_POLL_S))
                 except TimeoutError:
-                    yield {"type": "ping", "run_id": run_id}
-                    if not self.is_active(run_id) and self.get_run(run_id)["status"] in TERMINAL_STATUSES:
-                        return
+                    # Events written by another process (a worker) never pass through this process's bus: read the ledger.
+                    fresh = await asyncio.to_thread(self.events, run_id, last)
+                    for event in fresh:
+                        last = event["id"]
+                        yield event
+                        if event["type"] in TERMINAL_EVENTS:
+                            return
+                    quiet = 0.0 if fresh else quiet + FOLLOW_POLL_S
+                    if quiet >= heartbeat:
+                        quiet = 0.0
+                        yield {"type": "ping", "run_id": run_id}
+                        if not self.is_active(run_id) and self.get_run(run_id)["status"] in TERMINAL_STATUSES:
+                            return
                     continue
                 if event.get("id", 0) <= last:
                     continue
@@ -452,6 +463,8 @@ class TaskService:
         finally:
             event_bus.unsubscribe(run_id, queue)
 
+
+FOLLOW_POLL_S = 0.5  # how often a followed run's ledger is re-read for events written by other processes
 
 _service: TaskService | None = None
 
