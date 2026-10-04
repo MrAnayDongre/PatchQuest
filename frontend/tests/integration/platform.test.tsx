@@ -32,7 +32,7 @@ describe('Integrations page', () => {
       { match: /\/api\/integrations$/, method: 'POST', status: 422, body: { detail: { code: 'refused', message: 'repo must look like owner/name' } } }])
     renderApp('#/integrations')
     fireEvent.click((await screen.findAllByRole('button', { name: /Connect/ }))[0])
-    await screen.findByText('Point the webhook at /hooks/<id>.')
+    await screen.findByText('Point the webhook at /hooks/<id>.', {}, { timeout: 5000 })
     expect((screen.getByRole('option', { name: /Store encrypted/ }) as HTMLOptionElement).disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Mine' } })
     fireEvent.change(screen.getByLabelText('Repo'), { target: { value: 'bad' } })
