@@ -27,7 +27,7 @@ shadow workspace and only promoted after your repository's own tests pass; risky
 ## 3. Run it for a team (server mode)
 
 ```bash
-pip install 'backend[server]'          # PostgreSQL driver + encryption
+pip install -e 'backend[server]'        # PostgreSQL driver + encryption
 export PATCHQUEST_DATABASE_URL=postgresql://patchquest:...@db:5432/patchquest
 export PATCHQUEST_SECRET_KEY=$(patchquest secrets keygen)
 patchquest admin init --org Acme --workspace main --owner you      # prints a token once

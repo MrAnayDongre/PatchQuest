@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/MrAnayDongre/PatchQuest/security/policy
+    about: Do not open a public issue for an exploitable vulnerability. Follow SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/MrAnayDongre/PatchQuest/discussions
+    about: Ask questions, share ideas and show what you built in GitHub Discussions.

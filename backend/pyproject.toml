@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "patchquest"
 version = "0.1.0"
-description = "Local-first agentic coding harness with deterministic orchestration, repo memory, and safety gates"
+description = "A durable runtime for long-horizon software agents: crash recovery, sandboxed execution, approvals, replay and fork, workflows, and evals."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.104.0",

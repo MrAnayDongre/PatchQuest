@@ -4,11 +4,11 @@ Measured on one machine, 2026-10-03, branch `anay/core-hardening`. Nothing here 
 
 | Check | Result |
 |---|---|
-| `ruff check .` / `mypy patchquest` | clean / no issues in 239 files |
-| Backend suite, SQLite | 1821 passed, 18 skipped |
-| Backend suite, PostgreSQL 16 | 1831 passed, 8 skipped |
-| Line coverage (`pytest --cov=patchquest`, SQLite) | 86% of 18,515 statements |
-| Frontend | 329 tests, typecheck and production build pass; browser smoke (`npm run smoke`) |
+| `ruff check .` / `mypy patchquest` | clean / no issues in 241 files |
+| Backend suite, SQLite | 1823 passed, 18 skipped |
+| Backend suite, PostgreSQL 16 | 1833 passed, 8 skipped |
+| Line coverage (`pytest --cov=patchquest`, SQLite) | 86% of 18,527 statements |
+| Frontend | 330 tests, typecheck and production build pass; browser smoke (`npm run smoke`) |
 | Recovery | real SIGKILL tests (API and workers, SQLite and PostgreSQL); container worker-kill run, once, by hand |
 | Load | see [benchmarks](benchmarks.md): single machine, PostgreSQL with `fsync=off`; not a production capacity claim |
 | Security | tenant-isolation, memory-poisoning, integration and policy suites under `tests/security`; [security](security.md) lists limits |
