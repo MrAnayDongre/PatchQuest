@@ -1025,7 +1025,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     from patchquest.domain.identity import Role
 
-    p = argparse.ArgumentParser(prog="patchquest", description="Local-first agentic coding harness")
+    p = argparse.ArgumentParser(prog="patchquest", description="Durable runtime for long-horizon software agents")
     p.add_argument("--config", help="path to config.yaml (default: $PATCHQUEST_CONFIG or ./config.yaml)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
