@@ -272,12 +272,12 @@ def test_report_redacts_secrets():
         task="Update config",
         commands_run=[{
             "command": "cat config.py",
-            "result": {"success": True, "stdout": 'key = "sk-abc123def456ghi789jkl012mno345pqr678"'},
+            "result": {"success": True, "stdout": 'key = "sk-notarealkeynotarealkeynotarealkey"'},
         }],
     )
     report = generate_report(ctx)
     md = report["report_md"]
-    assert "sk-abc123def456" not in md
+    assert "sk-notarealkey" not in md
 
 
 def test_report_with_no_changes():

@@ -18,7 +18,7 @@ from patchquest.tools.secret_guard import has_secrets, redact_secrets, scan_diff
 # ======================================================================
 
 def test_detects_openai_key():
-    text = 'api_key = "sk-abc123def456ghi789jkl012mno345pqr678"'
+    text = 'api_key = "sk-notarealkeynotarealkeynotarealkey"'
     findings = scan_text(text)
     assert len(findings) > 0
     assert any("OpenAI" in f.finding_type for f in findings)
@@ -46,7 +46,7 @@ def test_detects_private_key():
 
 
 def test_redacts_secrets():
-    text = 'key = "sk-abc123def456ghi789jkl012mno345pqr678"'
+    text = 'key = "sk-notarealkeynotarealkeynotarealkey"'
     redacted = redact_secrets(text)
     assert "sk-abc123" not in redacted
     assert "[REDACTED]" in redacted
@@ -55,7 +55,7 @@ def test_redacts_secrets():
 def test_blocks_diff_with_secret():
     diff = """+++ b/config.py
 @@ -1,3 +1,4 @@
-+API_KEY = "sk-abc123def456ghi789jkl012mno345pqr678"
++API_KEY = "sk-notarealkeynotarealkeynotarealkey"
  import os
 """
     findings = scan_diff(diff)
@@ -83,7 +83,7 @@ def test_does_not_flag_short_strings():
 
 
 def test_has_secrets_helper():
-    assert has_secrets('key = "sk-abc123def456ghi789jkl012mno345pqr678"')
+    assert has_secrets('key = "sk-notarealkeynotarealkeynotarealkey"')
     assert not has_secrets("x = 42")
 
 
@@ -148,7 +148,7 @@ class TestFileToolsSafety:
 
     def test_create_file_blocks_secrets(self):
         repo = tempfile.mkdtemp()
-        content = 'API_KEY = "sk-abc123def456ghi789jkl012mno345pqr678"'
+        content = 'API_KEY = "sk-notarealkeynotarealkeynotarealkey"'
         result = create_file("config.py", content, repo)
         assert result["success"] is False
         assert "secret" in result["error"].lower()

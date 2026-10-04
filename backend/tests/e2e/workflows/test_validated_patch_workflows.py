@@ -237,7 +237,7 @@ class TestSafety:
     @pytest.mark.asyncio
     async def test_patch_that_adds_a_secret_is_rejected_not_crashing(self, repo):
         leak = {"edits": [{"path": "calc.py", "search": "return a - b",
-                           "replace": 'return a + b  # sk-abc123def456ghi789jkl012mno345pqr678'}],
+                           "replace": 'return a + b  # sk-notarealkeynotarealkeynotarealkey'}],
                 "create": [], "delete": [], "rationale": ""}
         sm, rid = await run_scripted(repo, {"planner": [PLAN], "coder": [leak]})
         assert (repo / "calc.py").read_text() == CALC_BUG

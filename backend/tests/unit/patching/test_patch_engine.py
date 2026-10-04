@@ -111,13 +111,13 @@ class TestUnifiedDiff:
         assert (tmp_path / "w.txt").read_bytes() == b"one\r\nTWO\r\nthree\r\n"
 
     def test_removing_an_existing_secret_is_allowed(self, tmp_path):
-        key = "sk-abc123def456ghi789jkl012mno345pqr678"
+        key = "sk-notarealkeynotarealkeynotarealkey"
         (tmp_path / "c.py").write_text(f'KEY = "{key}"\nx = 1\n')
         diff = f'--- a/c.py\n+++ b/c.py\n@@ -1,2 +1,2 @@\n-KEY = "{key}"\n+KEY = None\n x = 1\n'
         assert apply_unified_diff(diff, str(tmp_path))["success"]
 
     def test_introducing_a_secret_is_blocked(self, repo):
-        diff = '--- a/a.py\n+++ b/a.py\n@@ -2,1 +2,2 @@\n     x = 1\n+K = "sk-abc123def456ghi789jkl012mno345pqr678"\n'
+        diff = '--- a/a.py\n+++ b/a.py\n@@ -2,1 +2,2 @@\n     x = 1\n+K = "sk-notarealkeynotarealkeynotarealkey"\n'
         res = apply_unified_diff(diff, str(repo))
         assert res["success"] is False and "SecretGuard" in res["error"]
         assert (repo / "a.py").read_text() == SRC
@@ -248,7 +248,7 @@ class TestApplyUnifiedDiff:
 +++ b/config.py
 @@ -1,2 +1,3 @@
  import os
-+API_KEY = "sk-abc123def456ghi789jkl012mno345pqr678"
++API_KEY = "sk-notarealkeynotarealkeynotarealkey"
  x = 1
 """
         repo = tempfile.mkdtemp()
@@ -302,7 +302,7 @@ class TestReplaceRange:
 
         result = replace_range(
             "app.py", 2, 2,
-            'key = "sk-abc123def456ghi789jkl012mno345pqr678"',
+            'key = "sk-notarealkeynotarealkeynotarealkey"',
             repo,
         )
         assert result["success"] is False

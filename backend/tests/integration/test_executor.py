@@ -35,7 +35,7 @@ class TestRunnerEnforcesPolicy:
         assert res["success"] and res["stdout"].strip() == "$HOME"
 
     def test_secrets_in_output_are_redacted(self, tmp_path):
-        (tmp_path / "k.txt").write_text("sk-abc123def456ghi789jkl012mno345pqr678\n")
+        (tmp_path / "k.txt").write_text("sk-notarealkeynotarealkeynotarealkey\n")
         res = run_command_safe("cat k.txt", str(tmp_path))
         assert "sk-abc123" not in res["stdout"]
 

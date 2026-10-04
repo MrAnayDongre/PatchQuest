@@ -193,7 +193,7 @@ class TestRecording:
             events.append((kind, payload))
 
         c = RunContext(run_id="rec", repo_path="/x", task="t", provider="sglang", model="qwen", event_sink=sink)
-        await roles._call_role("intake", "sys", "token sk-abc123def456ghi789jkl012mno345pqr678", c)
+        await roles._call_role("intake", "sys", "token sk-notarealkeynotarealkeynotarealkey", c)
         with get_db() as conn:
             row = conn.execute("SELECT * FROM model_calls WHERE run_id = 'rec'").fetchone()
         assert row["role"] == "intake" and row["provider"] == "sglang" and row["status"] == "ok"
