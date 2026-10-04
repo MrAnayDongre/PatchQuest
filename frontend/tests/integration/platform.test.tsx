@@ -31,8 +31,10 @@ describe('Integrations page', () => {
     const calls = mockFetch([...common, { match: /\/integrations\/kinds$/, body: kinds }, { match: /\/integrations\?workspace_id=w1$/, body: [] },
       { match: /\/api\/integrations$/, method: 'POST', status: 422, body: { detail: { code: 'refused', message: 'repo must look like owner/name' } } }])
     renderApp('#/integrations')
-    fireEvent.click((await screen.findAllByRole('button', { name: /Connect/ }))[0])
-    await screen.findByText('Point the webhook at /hooks/<id>.', {}, { timeout: 5000 })
+    const connect = (await screen.findAllByRole('button', { name: /Connect/ }))[0] as HTMLButtonElement
+    await waitFor(() => expect(connect.disabled).toBe(false)) // disabled until the caller's permissions have loaded
+    fireEvent.click(connect)
+    await screen.findByText('Point the webhook at /hooks/<id>.')
     expect((screen.getByRole('option', { name: /Store encrypted/ }) as HTMLOptionElement).disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Mine' } })
     fireEvent.change(screen.getByLabelText('Repo'), { target: { value: 'bad' } })
