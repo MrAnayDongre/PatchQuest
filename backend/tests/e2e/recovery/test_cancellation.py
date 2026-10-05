@@ -82,11 +82,16 @@ class TestRun:
             f"import os, time, unittest\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n"
             f"        open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n        time.sleep(60)\n")
 
+        child = {}
+
         async def canceller(sm, rid):
             for _ in range(600):
                 if any(e["type"] == "command_started" for e in fetch_events(rid)) and pidfile.exists():
-                    sm.cancel()
-                    return
+                    text = pidfile.read_text().strip()  # open(..., 'w') creates the file before the pid is in it
+                    if text.isdigit():
+                        child["pid"] = int(text)  # read it now: cancelling must not depend on a later read
+                        sm.cancel()
+                        return
                 await asyncio.sleep(0.02)
 
         t0 = time.monotonic()
@@ -94,7 +99,7 @@ class TestRun:
         assert time.monotonic() - t0 < 15
         row = run_row(rid)
         assert row["status"] == "cancelled" and row["failure_kind"] == "USER_CANCELLED"
-        assert wait_until_dead(int(pidfile.read_text()))
+        assert wait_until_dead(child["pid"])
         assert (repo / "calc.py").read_text() == CALC_BUG
 
     @pytest.mark.asyncio
