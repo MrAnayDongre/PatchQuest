@@ -109,13 +109,14 @@ def test_events_appended_concurrently_to_one_run_are_never_skipped_by_a_reader_f
 
     def reader() -> None:
         cursor = 0
-        while not stop.is_set() or True:
+        while True:
+            finished = stop.is_set()  # sampled before reading: a pass that starts after the last commit must come back empty
             with get_db() as conn:
                 rows = ledger.read(conn, "busy", after=cursor, limit=500)
             for r in rows:
                 seen.append(r["id"])
                 cursor = r["id"]
-            if stop.is_set() and not rows:
+            if finished and not rows:
                 return
             time.sleep(0.001)
 
