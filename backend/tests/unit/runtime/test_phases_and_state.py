@@ -11,6 +11,7 @@ import tempfile
 
 import pytest
 
+from patchquest.config import get_config
 from patchquest.database import get_db
 from patchquest.orchestrator.phases import Phase, PhaseStatus
 from patchquest.orchestrator.run_context import _detect_read_only
@@ -72,6 +73,12 @@ def assert_every_phase_started_has_terminal_event(events: list[dict]) -> None:
         ]
         assert terminals, f"Phase {phase} has phase_started but no terminal event"
         assert len(terminals) == 1, f"Phase {phase} has {len(terminals)} terminal events, expected 1"
+
+
+@pytest.fixture(autouse=True)
+def _promote_without_asking():
+    # The mock repository has nothing to validate, so the default policy would wait for a person to approve the patch.
+    get_config().agent.promote_policy = "always"
 
 
 @pytest.fixture
