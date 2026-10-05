@@ -50,6 +50,7 @@ id_ed25519
 
 # PatchQuest local runtime
 .patchquest/
+patchquest.db.pre-*.bak
 patchquest.db
 patchquest.db-shm
 patchquest.db-wal

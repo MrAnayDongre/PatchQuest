@@ -1,0 +1,68 @@
+schema: 1
+id: multifile-config-key-rename
+category: multi_file
+difficulty: medium
+task: The config key 'timeout' was renamed to 'timeout_seconds'. Update the loader in config_loader.py
+  and its consumer in client.py to use the new key (settings.json already uses it).
+files:
+  config_loader.py: |
+    import json
+
+
+    def load_config(path):
+        with open(path) as fh:
+            raw = json.load(fh)
+        return {"timeout": raw["timeout"], "retries": raw.get("retries", 3)}
+  client.py: |
+    from config_loader import load_config
+
+
+    def request_budget(path):
+        cfg = load_config(path)
+        return cfg["timeout"] * cfg["retries"]
+  settings.json: |
+    {"timeout_seconds": 5, "retries": 2}
+  tests/test_client.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from client import request_budget
+
+
+    class T(unittest.TestCase):
+        def test_budget(self):
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.assertEqual(request_budget(os.path.join(root, "settings.json")), 10)
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_loader_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      import json, tempfile
+      from config_loader import load_config
+
+
+      class O(unittest.TestCase):
+          def test_new_key_and_default_retries(self):
+              with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                  json.dump({"timeout_seconds": 7}, fh)
+              cfg = load_config(fh.name)
+              self.assertEqual(cfg["timeout_seconds"], 7)
+              self.assertEqual(cfg["retries"], 3)
+solution:
+  files_to_inspect:
+  - config_loader.py
+  - client.py
+  edits:
+  - path: config_loader.py
+    search: "{\"timeout\": raw[\"timeout\"], "
+    replace: "{\"timeout_seconds\": raw[\"timeout_seconds\"], "
+  - path: client.py
+    search: |-
+      cfg["timeout"]
+    replace: |-
+      cfg["timeout_seconds"]
+  create: []

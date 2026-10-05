@@ -1,0 +1,223 @@
+{
+  "schema": 1,
+  "git_sha": "2d5fe92",
+  "timestamp": "2026-10-03T20:17:48.918235+00:00",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) Ultra 7 255HX",
+    "cores": 20,
+    "memory_gb": 30.8,
+    "platform": "Linux-7.0.0-34-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "config": {
+    "orgs": 1000,
+    "users_per_org": 5,
+    "runs": 10000,
+    "events_per_run": 40,
+    "api_samples": 300,
+    "queue_runs": 1000,
+    "hot_fraction": 0.3,
+    "workload_runs": 1000,
+    "workers": 100,
+    "recovery_trials": 20,
+    "postgres": "postgresql://pq@127.0.0.1:54329/pq_test"
+  },
+  "seed": {
+    "identity_s": 0.86,
+    "runs_and_events_s": 18.36,
+    "events": 400000,
+    "orgs": 1000,
+    "runs": 10000,
+    "hot_tenant_runs": 3340
+  },
+  "api": {
+    "list_runs": {
+      "n": 300,
+      "p50_ms": 1.199,
+      "p95_ms": 3.551,
+      "max_ms": 30.025,
+      "mean_ms": 1.83
+    },
+    "get_run": {
+      "n": 300,
+      "p50_ms": 1.239,
+      "p95_ms": 4.184,
+      "max_ms": 5.766,
+      "mean_ms": 1.962
+    },
+    "events_page": {
+      "n": 300,
+      "p50_ms": 1.491,
+      "p95_ms": 4.638,
+      "max_ms": 5.857,
+      "mean_ms": 2.163
+    },
+    "metrics_7d": {
+      "n": 300,
+      "p50_ms": 1.482,
+      "p95_ms": 4.5,
+      "max_ms": 79.317,
+      "mean_ms": 2.499
+    },
+    "approvals": {
+      "n": 300,
+      "p50_ms": 1.243,
+      "p95_ms": 4.447,
+      "max_ms": 5.459,
+      "mean_ms": 2.058
+    },
+    "authenticate_only": {
+      "n": 300,
+      "p50_ms": 0.993,
+      "p95_ms": 2.922,
+      "max_ms": 38.14,
+      "mean_ms": 1.559
+    }
+  },
+  "api_hot_tenant": {
+    "list_runs": {
+      "n": 300,
+      "p50_ms": 2.058,
+      "p95_ms": 3.725,
+      "max_ms": 5.088,
+      "mean_ms": 2.289
+    },
+    "get_run": {
+      "n": 300,
+      "p50_ms": 1.648,
+      "p95_ms": 3.541,
+      "max_ms": 4.57,
+      "mean_ms": 1.924
+    },
+    "events_page": {
+      "n": 300,
+      "p50_ms": 2.07,
+      "p95_ms": 5.039,
+      "max_ms": 6.053,
+      "mean_ms": 2.591
+    },
+    "metrics_7d": {
+      "n": 300,
+      "p50_ms": 41.247,
+      "p95_ms": 61.257,
+      "max_ms": 67.576,
+      "mean_ms": 43.627
+    },
+    "approvals": {
+      "n": 300,
+      "p50_ms": 3.761,
+      "p95_ms": 5.11,
+      "max_ms": 6.132,
+      "mean_ms": 3.654
+    },
+    "authenticate_only": {
+      "n": 300,
+      "p50_ms": 2.009,
+      "p95_ms": 3.195,
+      "max_ms": 4.156,
+      "mean_ms": 2.046
+    }
+  },
+  "recovery": {
+    "trials": 20,
+    "lease_s": 0.4,
+    "lease_expiry_to_recovered": {
+      "n": 20,
+      "p50_ms": 9.566,
+      "p95_ms": 10.92,
+      "max_ms": 12.457,
+      "mean_ms": 9.492
+    },
+    "lease_expiry_to_completed": {
+      "n": 20,
+      "p50_ms": 89.092,
+      "p95_ms": 106.871,
+      "max_ms": 121.158,
+      "mean_ms": 91.019
+    }
+  },
+  "workload": {
+    "runs": 1000,
+    "workers": 100,
+    "peak_concurrently_running": 100,
+    "errors": 0,
+    "error_rate": 0.0,
+    "create_and_enqueue": {
+      "n": 1000,
+      "p50_ms": 0.931,
+      "p95_ms": 1.164,
+      "max_ms": 3.985,
+      "mean_ms": 0.984
+    },
+    "enqueue_wall_s": 0.98,
+    "drain_wall_s": 48.55,
+    "runs_per_s": 20.6,
+    "queued_to_completed": {
+      "n": 1000,
+      "p50_ms": 24515.027,
+      "p95_ms": 48487.248,
+      "max_ms": 48574.186,
+      "mean_ms": 26824.47
+    }
+  },
+  "queue": {
+    "single_claimer": {
+      "claimers": 1,
+      "runs": 500,
+      "claims_per_s": 2123.0,
+      "duplicates": 0,
+      "claim_latency": {
+        "n": 500,
+        "p50_ms": 0.407,
+        "p95_ms": 0.996,
+        "max_ms": 1.963,
+        "mean_ms": 0.469
+      }
+    },
+    "concurrent_claimers": {
+      "claimers": 8,
+      "runs": 500,
+      "claims_per_s": 2082.1,
+      "duplicates": 0,
+      "claim_latency": {
+        "n": 500,
+        "p50_ms": 3.681,
+        "p95_ms": 5.331,
+        "max_ms": 8.054,
+        "mean_ms": 3.783
+      }
+    }
+  },
+  "ledger": {
+    "single_writer": {
+      "writers": 1,
+      "events": 500,
+      "events_per_s": 5807.7,
+      "append_latency": {
+        "n": 500,
+        "p50_ms": 0.158,
+        "p95_ms": 0.216,
+        "max_ms": 0.846,
+        "mean_ms": 0.171
+      }
+    },
+    "concurrent_writers": {
+      "writers": 8,
+      "events": 1600,
+      "events_per_s": 2381.4,
+      "append_latency": {
+        "n": 1600,
+        "p50_ms": 3.27,
+        "p95_ms": 4.856,
+        "max_ms": 6.41,
+        "mean_ms": 3.333
+      }
+    }
+  },
+  "backend": "postgresql",
+  "resources": {
+    "db_mb": 281.9,
+    "rss_growth_mb": 35.0,
+    "cpu_s": 60.6
+  }
+}

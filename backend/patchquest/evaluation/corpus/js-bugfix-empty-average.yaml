@@ -1,0 +1,46 @@
+schema: 1
+id: js-bugfix-empty-average
+category: bug_fix
+difficulty: easy
+task: average() in stats.js returns NaN for an empty array. It should return 0.
+files:
+  package.json: |
+    {"name": "stats", "version": "1.0.0", "scripts": {"test": "node --test"}}
+  stats.js: |
+    function average(values) {
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    module.exports = { average };
+  stats.test.js: |
+    const test = require('node:test');
+    const assert = require('node:assert');
+    const { average } = require('./stats');
+
+    test('empty array averages to 0', () => {
+      assert.strictEqual(average([]), 0);
+    });
+test_command: npm test --silent
+oracle:
+  command: npm test --silent
+  files:
+    stats.oracle.test.js: |
+      const test = require('node:test');
+      const assert = require('node:assert');
+      const { average } = require('./stats');
+
+      test('normal averages still work', () => {
+        assert.strictEqual(average([2, 4, 6]), 4);
+        assert.strictEqual(average([5]), 5);
+      });
+solution:
+  files_to_inspect:
+  - stats.js
+  edits:
+  - path: stats.js
+    search: |2-
+        return values.reduce((a, b) => a + b, 0) / values.length;
+    replace: |2-
+        if (values.length === 0) return 0;
+        return values.reduce((a, b) => a + b, 0) / values.length;
+  create: []

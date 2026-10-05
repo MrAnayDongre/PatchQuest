@@ -1,0 +1,79 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Remove API keys, tokens and private source from anything you paste.** If this is a security
+        vulnerability, do not file it here: see [SECURITY.md](../blob/HEAD/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: PatchQuest version or commit
+      description: "`patchquest doctor` prints the environment; `git rev-parse --short HEAD` gives the commit."
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 / macOS 15 / Windows 11 (WSL)
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment mode
+      options:
+        - Local (patchquest run / serve)
+        - Demo (patchquest demo)
+        - Single host, queued workers (SQLite)
+        - Team server (PostgreSQL)
+        - Docker / docker compose
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options: [SQLite, PostgreSQL]
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / engine and model (if relevant)
+      placeholder: ollama / qwen2.5-coder:7b
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. A failing test is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and run evidence
+      description: "Server log lines, `patchquest inspect RUN`, or a sanitized `patchquest doctor --bundle`. Remove secrets first."
+      render: shell

@@ -1,12 +1,23 @@
-"""Safe command execution with timeouts, output caps, and secret redaction."""
+"""Policy-enforcing command execution.
+
+Every command is classified first. Blocked commands never run; commands that need approval
+only run when the caller passes ``approved=True`` (the orchestrator does this after a human
+approves). Automatic commands run without a shell, in a scrubbed environment.
+"""
 
 from __future__ import annotations
 
-import subprocess
+import threading
 from typing import Any
 
 from patchquest.config import get_config
-from patchquest.tools.secret_guard import redact_secrets
+from patchquest.execution.executor import run_argv, run_shell, scrubbed_env
+from patchquest.tools.command_risk import RiskLevel, classify
+
+
+def _refusal(code: int, message: str, **extra: Any) -> dict[str, Any]:
+    return {"success": False, "returncode": code, "stdout": "", "stderr": message, "truncated": False,
+            "timed_out": False, **extra}
 
 
 def run_command_safe(
@@ -15,48 +26,24 @@ def run_command_safe(
     timeout: int | None = None,
     max_output: int | None = None,
     env: dict[str, str] | None = None,
+    approved: bool = False,
+    cancel: threading.Event | None = None,
 ) -> dict[str, Any]:
     config = get_config()
     timeout = timeout or config.safety.max_command_timeout
     max_output = max_output or config.safety.max_output_bytes
 
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
+    decision = classify(command, cwd)
+    if decision.level == RiskLevel.BLOCKED:
+        return _refusal(-2, f"Blocked: {decision.reason}", blocked=True, risk=decision.level.value)
+    if decision.level == RiskLevel.RISKY_ASK and not approved:
+        return _refusal(-3, f"Approval required: {decision.reason}", needs_approval=True,
+                        risk=decision.level.value, reason=decision.reason)
 
-        stdout = result.stdout[:max_output] if result.stdout else ""
-        stderr = result.stderr[:max_output] if result.stderr else ""
-
-        stdout = redact_secrets(stdout)
-        stderr = redact_secrets(stderr)
-
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
-            "truncated": len(result.stdout or "") > max_output or len(result.stderr or "") > max_output,
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout}s",
-            "truncated": False,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Command execution error: {e}",
-            "truncated": False,
-        }
+    child_env = env if env is not None else scrubbed_env(passthrough=tuple(config.safety.env_passthrough))
+    if decision.shell_syntax or not decision.argv:
+        result = run_shell(command, cwd, timeout, max_output, child_env, cancel)
+    else:
+        result = run_argv(decision.argv, cwd, timeout, max_output, child_env, cancel)
+    result["risk"] = decision.level.value
+    return result

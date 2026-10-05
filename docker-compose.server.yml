@@ -1,0 +1,53 @@
+# Team / server mode: PostgreSQL + API + workers. Several API and worker containers (on one or many hosts that can
+# reach the database) share one database; runs survive a worker crash and are picked up by another worker.
+#
+#   export POSTGRES_PASSWORD=$(openssl rand -hex 16)
+#   docker compose -f docker-compose.server.yml run --rm api patchquest admin init --org Acme --workspace main --owner you
+#   docker compose -f docker-compose.server.yml up -d --scale worker=3
+#
+# What this does NOT give you: TLS (put a reverse proxy in front), backups (see docs/deployment.md), object storage
+# for artifacts, SSO. Nothing here is tuned for or validated at large scale beyond docs/benchmarks.md.
+x-env: &env
+  PATCHQUEST_QUEUE_MODE: "true"
+  PATCHQUEST_DATABASE_URL: postgresql://patchquest:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/patchquest
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: patchquest
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: patchquest
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patchquest -d patchquest"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: patchquest
+    ports: ["127.0.0.1:8000:8000"]
+    environment: *env
+    volumes:
+      - ${PATCHQUEST_REPOS:-./repos}:/repos
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker:
+    image: patchquest
+    command: ["patchquest", "worker", "--grace", "60"]
+    environment: *env
+    volumes:
+      - ${PATCHQUEST_REPOS:-./repos}:/repos
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    stop_grace_period: 90s
+
+volumes:
+  pg-data:

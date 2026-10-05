@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Type
 
 from patchquest.calendar.calendar_provider_base import CalendarProvider
 
 logger = logging.getLogger(__name__)
 
-_providers: dict[str, Type[CalendarProvider]] = {}
+_providers: dict[str, type[CalendarProvider]] = {}
 
 
-def register_calendar_provider(name: str, cls: Type[CalendarProvider]) -> None:
+def register_calendar_provider(name: str, cls: type[CalendarProvider]) -> None:
     _providers[name] = cls
 
 
@@ -40,10 +39,10 @@ def get_provider_status() -> list[dict]:
 
 
 def _auto_register() -> None:
-    from patchquest.calendar.providers.local_calendar import LocalCalendarProvider
-    from patchquest.calendar.providers.ics_calendar import ICSCalendarProvider
     from patchquest.calendar.providers.caldav_calendar import CalDAVCalendarProvider
     from patchquest.calendar.providers.google_calendar import GoogleCalendarProvider
+    from patchquest.calendar.providers.ics_calendar import ICSCalendarProvider
+    from patchquest.calendar.providers.local_calendar import LocalCalendarProvider
     from patchquest.calendar.providers.microsoft_graph_calendar import MicrosoftGraphCalendarProvider
 
     register_calendar_provider("local", LocalCalendarProvider)

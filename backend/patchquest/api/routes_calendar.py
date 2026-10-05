@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -69,7 +71,7 @@ async def list_events(start: str, end: str, provider: str | None = None, calenda
         events = list_events(start, end, provider, calendar_id)
         return [e.model_dump() for e in events]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/events")
@@ -86,13 +88,13 @@ async def create_event(req: CreateEventRequest):
         created = create_event(event)
         return created.model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.patch("/events/{event_id}")
 async def update_event(event_id: str, req: UpdateEventRequest):
-    from patchquest.calendar.calendar_service import list_events as _list, update_event
     from patchquest.calendar.calendar_models import CalendarEvent
+    from patchquest.calendar.calendar_service import update_event
     try:
         updates = req.model_dump(exclude_none=True)
         event = CalendarEvent(
@@ -104,7 +106,7 @@ async def update_event(event_id: str, req: UpdateEventRequest):
         updated = update_event(event_id, event)
         return updated.model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/events/{event_id}")
@@ -136,17 +138,18 @@ async def import_ics(req: ImportICSRequest):
             raise HTTPException(status_code=400, detail="Provide ics_text or file_path")
         return {"imported": len(events), "events": [e.model_dump() for e in events]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/export-ics")
 async def export_ics(start: str | None = None, end: str | None = None):
+    from datetime import datetime, timedelta
+
     from patchquest.calendar.calendar_service import list_events
     from patchquest.calendar.providers.ics_calendar import ICSCalendarProvider
-    from datetime import datetime, timedelta, timezone
 
-    s = start or (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    e = end or (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+    s = start or (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    e = end or (datetime.now(UTC) + timedelta(days=365)).isoformat()
 
     events = list_events(s, e)
     provider = ICSCalendarProvider()

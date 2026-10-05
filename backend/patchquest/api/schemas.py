@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from patchquest.domain.approvals import Decision
 
 
 class CreateRunRequest(BaseModel):
@@ -13,11 +15,20 @@ class CreateRunRequest(BaseModel):
     provider: str = "mock"
     model: str | None = None
     runtime_mode: str = "local"
+    base_url: str | None = None
     model_profile: str | None = None
     memory_mode: str | None = None
     interface_mode: str | None = None
     allow_network: bool = False
     dry_run: bool = False
+    workspace_id: str | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)  # per-run agent.* settings, e.g. {"agent.max_model_calls": 80}
+
+
+class ApprovalDecision(BaseModel):
+    decision: Decision
+    note: str | None = None
+    modified_command: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -36,6 +47,13 @@ class RunResponse(BaseModel):
     created_at: str
     updated_at: str
     completed_at: str | None = None
+    workspace_id: str = "ws_local"
+    outcome: str | None = None
+    verdict: str | None = None
+    failure_kind: str | None = None
+    attempt: int = 1
+    parent_run_id: str | None = None
+    lineage_kind: str | None = None
 
 
 class ProviderInfo(BaseModel):
@@ -136,3 +154,21 @@ class PhaseStatusResponse(BaseModel):
     status: str
     started_at: str | None = None
     completed_at: str | None = None
+
+
+class ResumeRequest(BaseModel):
+    accept_drift: bool = False
+    rollback: bool = False
+
+
+class ForkRequest(BaseModel):
+    from_checkpoint: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    accept_drift: bool = False
+
+
+class ReplayRequest(BaseModel):
+    mode: Literal["state", "model", "live"] = "state"

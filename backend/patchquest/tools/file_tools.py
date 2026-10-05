@@ -18,7 +18,7 @@ def read_file(path: str, repo_root: str, start: int | None = None, end: int | No
         return {"error": "Path outside allowed workspace", "content": None}
 
     try:
-        with open(full_path, "r", errors="replace") as f:
+        with open(full_path, errors="replace") as f:
             lines = f.readlines()
     except FileNotFoundError:
         return {"error": f"File not found: {path}", "content": None}

@@ -22,6 +22,9 @@ class EventBus:
                 del self._subscribers[run_id]
 
     async def emit(self, run_id: str, event: dict[str, Any]) -> None:
+        self.emit_nowait(run_id, event)
+
+    def emit_nowait(self, run_id: str, event: dict[str, Any]) -> None:
         for queue in self._subscribers.get(run_id, []):
             try:
                 queue.put_nowait(event)

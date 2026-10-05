@@ -53,7 +53,7 @@ class GoogleCalendarProvider(CalendarProvider):
             raise ImportError(
                 "google-api-python-client and google-auth packages required. "
                 "Install with: pip install google-api-python-client google-auth-oauthlib"
-            )
+            ) from None
 
         creds_data = json.loads(Path(creds_path).read_text())
         credentials = Credentials.from_authorized_user_info(creds_data)

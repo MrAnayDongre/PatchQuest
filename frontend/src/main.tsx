@@ -1,13 +1,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { installAuthFetch } from './api/auth'
 import { ThemeProvider } from './theme/ThemeProvider'
-import './styles/themes.css'
-import './styles/globals.css'
-import './styles/lumina.css'
-import './styles/arcade-theme.css'
-import './styles/layout.css'
-import './styles/games.css'
+import './design/tokens.css'
+import './design/base.css'
+import './design/components.css'
+import './app/shell.css'
+
+installAuthFetch()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import random
 from typing import Any
 
 from patchquest.agents.provider_base import ModelConfig, ProviderBase, ProviderResponse
@@ -14,12 +12,6 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://integrate.api.nvidia.com/v1"
 _DEFAULT_MODEL = "openai/gpt-oss-120b"
-
-_MAX_RETRIES = 3
-_INITIAL_BACKOFF = 1.0
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_NON_RETRYABLE_STATUS_CODES = {400, 401, 403, 404}
-
 
 def _messages_to_responses_input(messages: list[dict[str, str]]) -> str:
     """Convert chat-style messages into a single Responses API input string.
@@ -105,7 +97,7 @@ class NvidiaProvider(ProviderBase):
         try:
             import httpx
         except ImportError:
-            raise RuntimeError("httpx is required for NVIDIA provider but is not installed")
+            raise RuntimeError("httpx is required for NVIDIA provider but is not installed") from None
 
         if not config.base_url:
             config.base_url = _BASE_URL
@@ -135,62 +127,15 @@ class NvidiaProvider(ProviderBase):
             "stream": False,
         }
 
-        last_exc: Exception | None = None
-        for attempt in range(_MAX_RETRIES + 1):
-            try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(url, json=body, headers=headers)
-
-                if resp.status_code in _NON_RETRYABLE_STATUS_CODES:
-                    err_body = resp.text[:500]
-                    err_body = _redact_key(err_body, api_key)
-                    raise RuntimeError(
-                        f"NVIDIA API error {resp.status_code}: {err_body}"
-                    )
-
-                if resp.status_code in _RETRYABLE_STATUS_CODES:
-                    retry_after = resp.headers.get("Retry-After")
-                    if retry_after:
-                        wait = float(retry_after)
-                    else:
-                        wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
-                    if attempt < _MAX_RETRIES:
-                        logger.warning(
-                            "NVIDIA API %d (attempt %d/%d), retrying in %.1fs",
-                            resp.status_code, attempt + 1, _MAX_RETRIES + 1, wait,
-                        )
-                        await asyncio.sleep(wait)
-                        continue
-                    err_body = _redact_key(resp.text[:300], api_key)
-                    raise RuntimeError(
-                        f"NVIDIA API error {resp.status_code} after {_MAX_RETRIES + 1} attempts: {err_body}"
-                    )
-
-                resp.raise_for_status()
-                data = resp.json()
-                break
-
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                err_msg = _redact_key(str(exc), api_key)
-                if exc.response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES:
-                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
-                    await asyncio.sleep(wait)
-                    continue
-                raise RuntimeError(f"NVIDIA API request failed: {err_msg}") from exc
-            except httpx.RequestError as exc:
-                last_exc = exc
-                if attempt < _MAX_RETRIES:
-                    wait = _INITIAL_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
-                    await asyncio.sleep(wait)
-                    continue
-                raise RuntimeError(
-                    f"NVIDIA API connection error after {_MAX_RETRIES + 1} attempts: {exc}"
-                ) from exc
-        else:
-            raise RuntimeError(
-                f"NVIDIA API failed after {_MAX_RETRIES + 1} attempts"
-            ) from last_exc
+        # One attempt: whether and when to retry is decided centrally (runtime.retry), from the typed
+        # failure, so retries do not multiply across layers.
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, json=body, headers=headers)
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise httpx.HTTPStatusError(_redact_key(str(exc), api_key), request=exc.request, response=exc.response) from None
+        data = resp.json()
 
         content = _extract_output_text(data)
         usage_data = data.get("usage", {})

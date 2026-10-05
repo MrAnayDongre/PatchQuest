@@ -335,6 +335,8 @@ body.game-overlay-open {
 }
 
 .game-card {
+  display: flex;
+  flex-direction: column;
   padding: 0.85rem;
   background: var(--bg-elevated);
   border: 1px solid var(--border-color);

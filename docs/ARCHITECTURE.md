@@ -1,125 +1,81 @@
-# PatchQuest Architecture
+# PatchQuest architecture
 
-This document describes how the backend, frontend, and runtime layers fit together. For setup and usage, see the [README](../README.md).
-
-## Design principles
-
-1. **Deterministic orchestration** — phase order is fixed; LLM output does not decide what runs next.
-2. **Event sourcing** — run state transitions are append-only events in SQLite, replayable for UI and reports.
-3. **Role isolation** — each agent role receives constrained context and structured output schemas.
-4. **Safety first** — command risk and SecretGuard run before shell execution; approvals gate risky operations.
-5. **Local-first** — SQLite persistence, optional offline mock mode, no required cloud services.
-
-## Backend layout
+A **modular monolith with a durable worker runtime**: strong internal boundaries, one deployable, a primary database.
 
 ```
-backend/patchquest/
-├── main.py              FastAPI app, router registration, scheduler startup
-├── config.py            YAML config loading (sample.config.yaml)
-├── database.py          SQLite schema, migrations, event insertion
-├── api/                 HTTP routes (runs, reports, scheduler, search, …)
-├── orchestrator/
-│   ├── state_machine.py Phase execution loop
-│   ├── phases.py        Phase enum and ordering (12 phases)
-│   ├── run_context.py   Mutable per-run state passed through phases
-│   ├── event_bus.py     In-process pub/sub for SSE fan-out
-│   └── approvals.py     Pending approval resolution
-├── agents/
-│   ├── provider_registry.py   Provider name → implementation
-│   ├── roles.py               Role-specific LLM calls
-│   ├── prompts.py             System instructions per role
-│   └── providers_*.py         OpenAI, Anthropic, NVIDIA, mock, …
-├── tools/
-│   ├── secret_guard.py        Pattern detection and redaction
-│   ├── command_risk.py        Deterministic command classification
-│   ├── command_runner.py      Local and sandboxed execution
-│   ├── patch_tools.py         Diff apply with safety checks
-│   └── file_tools.py          Workspace-scoped file I/O
-├── memory/
-│   ├── repo_indexer.py        File scan and language detection
-│   ├── tree_sitter_*.py       AST symbol extraction
-│   ├── code_graph.py          Symbol dependency graph
-│   └── memory_store.py        Per-repo fact persistence
-├── runtime/
-│   ├── local_runtime.py       Host command execution
-│   └── docker_runtime.py      Container sandbox lifecycle
-├── scheduler/
-│   ├── scheduler.py           Task CRUD and run dispatch
-│   └── scheduler_loop.py      Background due-task poller
-├── search/                    Pluggable web search providers + cache
-├── calendar/                  Local and external calendar integrations
-└── reports/
-    └── final_report.py        Markdown report from RunContext or DB
+        UI (frontend/)        CLI (patchquest)        HTTP clients
+              \                    |                    /
+               +------ application / API (control plane) ------+
+               |  auth, tenancy, approvals, run lifecycle       |
+               +---------+----------------+---------------------+
+                         |                |
+                 durable runtime     workflow engine ---- connectors (webhooks, GitHub, SSRF guard)
+        (state machine, ledger,           |
+         checkpoints, resume, replay,     |
+         queue + workers, budgets)        |
+                         |                |
+               agents, providers, tools, sandbox, repo intelligence
+                         |
+               persistence (SQLite locally, PostgreSQL in server mode: ledger, checkpoints, identity, audit, queue)
+                         |
+               observability (metrics, OTLP traces) - derived from the ledger
 ```
 
-## Run lifecycle
+## Packages and the rule between them
 
-```
-POST /api/runs
-    │
-    ▼
-Insert runs row (provider, model, runtime_mode, memory_mode)
-    │
-    ▼
-RunStateMachine.execute()
-    │
-    ├── for each phase in PHASE_ORDER:
-    │       emit phase_started event
-    │       run phase handler (may call LLM, tools, tests)
-    │       emit phase_completed | phase_failed | phase_skipped | phase_blocked
-    │
-    ▼
-final_report phase → INSERT reports
-    │
-    ▼
-Update runs.status = completed | failed
-```
+Dependencies point **down** this list; a package never imports from one above it.
 
-Blocked phases (approval required) pause until `POST /api/runs/{id}/approve` resolves the pending action.
+| Package | Responsibility |
+|---|---|
+| `domain/` | pure types and rules: run status machine, failure taxonomy, side effects, approvals, identity/roles, tenancy, **policy**, **memory and preferences**, **plugin manifests**, budgets, workflow definitions. No I/O. |
+| `persistence/`, `database.py`, `dbpg.py` | migrations (16), the append-only ledger, validated run transitions, checkpoints, approvals, identity, tenancy, policies, memories, plugin state. One SQL subset for SQLite and PostgreSQL; `dbpg.py` translates the few dialect differences and pools connections; writes can be fenced by lease epoch |
+| `runtime/` | fingerprints and drift, resume planning, replay, lineage/fork, retry engine, queue + worker (leases, `SKIP LOCKED`), workspace and sandbox, **policy** application, **memory service, run memory, repository profile** |
+| `orchestrator/` | `RunStateMachine` (12 phases), snapshot codec, event bus |
+| `agents/`, `providers/` | model roles and prompts, provider contract and adapters, structured output, budgeting, failover, health |
+| `patching/`, `tools/`, `execution/`, `validation/`, `context/`, `memory/` | verified edits, command policy and execution, test running, context selection, repo index |
+| `application/` | `TaskService`: the one place API and CLI go through (create, launch, resume, fork, replay, decide, enqueue) |
+| `workflows/`, `connectors/`, `integrations/` | durable workflow engine and templates; connector contract and the GitHub, Slack, Linear, Jira, Notion and webhook connectors; per-workspace integrations with encrypted secrets (`secrets_store.py`) and the signed `/hooks` ingress |
+| `plugins/` | plugin host: discovery, grants, policy-gated invocation, quarantine; trusted (in-process) and external-process runners |
+| `demo/` | the seeded demo world, simulators, and the kill-the-worker scenario |
+| `observability/`, `evaluation/`, `rl/` | run and operational metrics, traces; the evaluation corpus, recovery scenarios, context-quality harness; the agent gym, parallel rollouts, production-run trajectories |
+| `api/`, `cli*.py`, `main.py` | thin adapters: auth dependencies, routes (runs, workflows, policies, memory, tenancy, integrations, hooks, metrics), commands |
 
-## Frontend layout
+## One run
 
-```
-frontend/src/
-├── App.tsx              Shell, routing, run/report navigation
-├── api/                 REST client, SSE event merge helpers
-├── pages/
-│   ├── HomePage.tsx         Mission launcher (provider, runtime, task)
-│   ├── RunDashboardPage.tsx Mission console + phase rail
-│   ├── SchedulerPage.tsx    Quest Queue
-│   ├── ReportPage.tsx       Final report viewer
-│   └── …                    Memory, Search, Calendar, Settings, Safety
-├── components/          Shared UI (PhaseTimeline, MissionProviderFields, …)
-├── lib/                 Pure helpers (phaseState, scheduler, runId)
-├── games/               Optional mini-games during long runs
-└── theme/               Dark/light token system
-```
+`created -> (queued) -> running -> completed | failed | cancelled`, with `waiting_approval`, `cancel_requested` and
+`interrupted` in between. Phases: intake, scan, plan, research, context, analysis, **patch** (in a shadow workspace),
+static checks, **test** (repair loop, baseline attribution), review, security scan, report/promote. After each settled
+phase a checksummed checkpoint is written. The real repository is touched once, at promotion, after validation, with
+sha256 preconditions, journaled before the first byte is written. See [runtime.md](runtime.md).
 
-The console subscribes to `GET /api/runs/{id}/stream` (SSE) and merges events into the phase timeline via `deriveMissionState()`.
+## Where state lives
 
-## Data stores
+| What | Where | Properties |
+|---|---|---|
+| History of a run | `run_events` | append-only (triggers), versioned, attributed, cursor-ordered |
+| Resumable state | `checkpoints` | one row per settled phase, sha256-verified, versioned |
+| Run status | `runs` | changes only via the transition table, compare-and-set, recorded in the ledger |
+| Who/what/may | `organizations workspaces principals memberships api_tokens` | hashed tokens, per-workspace roles |
+| Security events | `audit_log` | append-only |
+| Work distribution | `runs.status = queued`, lease columns | exclusive claim, heartbeat, expiry recovery |
+| Workflows | `workflows workflow_runs workflow_steps workflow_events` | versioned definitions, durable steps |
+| Connectors | `connector_events webhook_deliveries` | per-workspace dedup, delivery log with dead-letter |
+| Shadow workspaces | `~/.patchquest/sandboxes/<run>/` | disposable; rebuilt from a checkpoint after a crash |
 
-| Store | Location | Contents |
-|-------|----------|----------|
-| SQLite | `patchquest.db` (configurable) | Runs, events, approvals, memory, scheduler, reports, search cache |
-| Sandbox workspace | `~/.patchquest/sandboxes/{run_id}/` | Docker runtime working copy |
-| Local state | `~/.patchquest/` | Calendar ICS export, runtime artifacts |
-
-Both `patchquest.db` and `.patchquest/` are gitignored.
-
-## Provider routing
-
-The frontend and scheduler pass `provider` + `model` on run creation. The orchestrator resolves the provider class from `provider_registry.py` and builds a `ModelConfig` with base URL and API key env var from the provider catalog.
-
-Mock provider returns structured JSON matching each role's schema—useful for CI and demos without network calls.
-
-## Scheduler integration
-
-Scheduled tasks persist `provider`, `model`, `runtime_mode`, and `memory_mode`. When due, `_execute_task()` inserts a run row and constructs `RunStateMachine` with the same parameters as manual `POST /api/runs`. Provider availability is validated before execution; missing keys produce a failed run and report rather than silent mock fallback.
+Everything the UI, metrics and traces show is *derived* from these rows, so a refresh, a crash or a replay shows the same thing.
 
 ## Extension points
 
-- **New LLM provider**: implement `ProviderBase`, register in `provider_registry.py`, add catalog entry in `routes_providers.py`.
-- **New search provider**: implement `SearchProviderBase`, register in `search_registry.py`.
-- **New calendar provider**: implement `CalendarProviderBase`, register in `calendar_registry.py`.
-- **New phase** (advanced): extend `Phase` enum, add handler in state machine, update frontend phase labels.
+- **Provider:** implement `ProviderBase`, register in `provider_registry.py`, add a catalogue entry. Capabilities are
+  declared and degradation is explicit; no provider-specific branches in agent code.
+- **Connector:** implement `Connector._execute`/`find_existing`/`verify`/`normalize` ([connectors.md](connectors.md)); the base class enforces grants and reconciliation.
+- **Workflow action:** add to `workflows/catalog.py` with its side-effect class; validation will then require a human gate for writes.
+- **Evaluation task:** a YAML file in `evaluation/corpus/` with a hidden oracle ([evals](evals/)).
+- **Migration:** append to `persistence/schema.py` (never edit a shipped one).
+
+Not built: a plugin loader, a vector index, PostgreSQL. See [deployment.md](deployment.md) and the README status table.
+| Policy, memory, preferences | `policies`, `memories` | versioned by supersession, tenant-owned, never deleted |
+| Teams, projects, repositories | `teams team_members team_roles projects repositories` | a path belongs to one workspace |
+| Integrations and secrets | `integrations secrets` | secrets encrypted, bound to their row |
+| Plugins | `plugin_state plugin_events` | append-only event record |
+| Repository index | `repo_files repo_symbols` | incremental, per repository |

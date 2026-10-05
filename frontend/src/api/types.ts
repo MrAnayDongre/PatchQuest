@@ -1,19 +1,40 @@
+export type RunStatus =
+  | 'created'
+  | 'queued'
+  | 'running'
+  | 'waiting_approval'
+  | 'cancel_requested'
+  | 'interrupted'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type RunOutcome = 'applied' | 'rejected' | 'conflict' | 'no_changes' | 'no_patch' | 'read_only'
+export type RunVerdict = 'passed' | 'regression' | 'unresolved' | 'no_tests'
+
 export interface Run {
   id: string
   repo_path: string
   task: string
-  status: string
+  status: RunStatus
   current_phase: string | null
   provider: string
   model: string | null
   runtime_mode: string
-  model_profile: string | null
-  memory_mode: string | null
-  allow_network: boolean
-  dry_run: boolean
+  model_profile?: string | null
+  memory_mode?: string | null
+  allow_network?: boolean
+  dry_run?: boolean
   created_at: string
   updated_at: string
   completed_at: string | null
+  workspace_id?: string
+  outcome?: RunOutcome | null
+  verdict?: RunVerdict | null
+  failure_kind?: string | null
+  attempt?: number
+  parent_run_id?: string | null
+  lineage_kind?: 'fork' | 'replay' | string | null
 }
 
 export interface RunEvent {
@@ -25,6 +46,8 @@ export interface RunEvent {
   message: string | null
   payload: Record<string, unknown> | null
   created_at: string
+  event_uid?: string
+  attempt?: number
 }
 
 export interface PhaseStatus {
@@ -86,6 +109,9 @@ export interface CreateRunRequest {
   interface_mode?: string
   allow_network?: boolean
   dry_run?: boolean
+  base_url?: string
+  workspace_id?: string
+  overrides?: Record<string, number | string | boolean>
 }
 
 export interface ProviderInfo {
@@ -102,4 +128,88 @@ export interface ProviderStatusInfo {
   available: boolean
   key_set: boolean
   error: string | null
+}
+
+export interface PendingApproval {
+  id: string
+  type: string
+  command: string | null
+  reason: string | null
+  side_effect: string
+  risk: string
+  phase: string | null
+  expires_at: string | null
+  created_at: string
+  grantable?: boolean
+}
+
+export type ApprovalDecisionKind = 'APPROVE_ONCE' | 'APPROVE_FOR_RUN' | 'DENY' | 'MODIFY' | 'CANCEL_RUN'
+
+export interface ResumePlan {
+  LAST_CHECKPOINT: string
+  INTERRUPTED_OPERATION: string
+  REPO_DRIFT: string
+  SIDE_EFFECT_CERTAINTY: string
+  RECOVERY_ACTION: string
+  APPROVAL_REQUIRED: boolean
+  CATEGORY: string
+  REASONS: string[]
+}
+
+export interface CheckpointSummary {
+  seq: number
+  phase: string
+  attempt: number
+  event_cursor: number
+  bytes: number
+  created_at: string
+  status: string
+}
+
+export interface BudgetEntry {
+  kind: string
+  used: number
+  limit: number
+  remaining?: number | null
+  exhausted: boolean
+}
+
+export interface ReplayComparison {
+  matched: boolean
+  divergences: { aspect: string; original: unknown; replay: unknown }[]
+}
+
+export interface StateReplayReport {
+  mode: 'state'
+  ok: boolean
+  findings: string[]
+  status_trail: unknown[]
+  phases: unknown
+  events: unknown
+  checkpoints: unknown
+}
+
+export interface LineageInfo {
+  ancestry: Run[]
+  children: Run[]
+}
+
+export interface EngineInfo {
+  engine: string
+  url: string
+  available: boolean
+  healthy: boolean
+  models: string[]
+  model_loaded: boolean
+  context_limit: number | null
+  capabilities: Record<string, unknown>
+  latency_ms: number | null
+  last_error: string | null
+}
+
+export interface ProviderHealthEntry {
+  provider: string
+  status: string
+  last_error?: string | null
+  [key: string]: unknown
 }

@@ -1,0 +1,10 @@
+**/.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+frontend/dist
+backend/benchmarks/history
+backend/patchquest.db*
+**/.env*
+docs

@@ -1,0 +1,65 @@
+schema: 1
+id: cli-shout-flag
+category: cli_change
+difficulty: medium
+task: Add a --shout flag to the greet command in cli.py. With it, the greeting is printed in upper case.
+  Without it nothing changes.
+files:
+  cli.py: |
+    import argparse
+
+
+    def build_parser():
+        parser = argparse.ArgumentParser(prog="greet")
+        parser.add_argument("name")
+        return parser
+
+
+    def main(argv=None):
+        args = build_parser().parse_args(argv)
+        return f"Hello, {args.name}!"
+  tests/test_cli.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from cli import main
+
+
+    class T(unittest.TestCase):
+        def test_shout(self):
+            self.assertEqual(main(["Ada", "--shout"]), "HELLO, ADA!")
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_cli_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      from cli import main
+
+
+      class O(unittest.TestCase):
+          def test_default_unchanged(self):
+              self.assertEqual(main(["Ada"]), "Hello, Ada!")
+
+          def test_flag_position_independent(self):
+              self.assertEqual(main(["--shout", "Grace"]), "HELLO, GRACE!")
+solution:
+  files_to_inspect:
+  - cli.py
+  - cli.py
+  edits:
+  - path: cli.py
+    search: |2
+          parser.add_argument("name")
+    replace: |2
+          parser.add_argument("name")
+          parser.add_argument("--shout", action="store_true")
+  - path: cli.py
+    search: |2-
+          return f"Hello, {args.name}!"
+    replace: |2-
+          greeting = f"Hello, {args.name}!"
+          return greeting.upper() if args.shout else greeting
+  create: []

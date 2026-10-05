@@ -34,7 +34,7 @@ class SerpApiSearchProvider(SearchProvider):
         opts = options or SearchOptions()
         api_key = self._require_env(self.api_key_env)
 
-        params = {
+        params: dict[str, str | int] = {
             "q": query,
             "api_key": api_key,
             "engine": self.engine,

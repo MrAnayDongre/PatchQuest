@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,8 +79,18 @@ def _has_mutation_intent(task_lower: str) -> bool:
     return bool(_MUTATION_RE.search(scrubbed))
 
 
+# "Do not modify any files", "don't change anything", "without editing the repo": a refusal that covers the whole
+# repository. A negation with a narrower object ("don't change the tests", "any other files") is a scope limit
+# and is not read-only.
+_GLOBAL_NEGATION = re.compile(
+    r"\b(?:do\s+not|don't|dont|never|must\s+not|should\s+not|shouldn't|without|please\s+don't)\s+(?:actually\s+)?"
+    r"(?:modify|modifying|change|changing|edit|editing|alter|altering|touch|touching|write\s+to|writing\s+to|update|updating|apply|applying)\s+"
+    r"(?:any|the|my|our|your|these|those|all)?\s*(?:of\s+)?(?:files?|anything|code|repo(?:sitory)?|source(?:\s+code)?|codebase|project)\b(?!\s+other)",
+    re.IGNORECASE)
+
+
 def _has_read_only_override(task_lower: str) -> bool:
-    return any(phrase in task_lower for phrase in _READ_ONLY_OVERRIDES)
+    return any(phrase in task_lower for phrase in _READ_ONLY_OVERRIDES) or bool(_GLOBAL_NEGATION.search(_scrub_scope_constraints(task_lower)))
 
 
 def _has_read_only_intent(task_lower: str) -> bool:
@@ -123,6 +134,7 @@ class RunContext:
     provider: str = "mock"
     model: str | None = None
     runtime_mode: str = "local"
+    base_url: str | None = None
     dry_run: bool = False
     read_only: bool = False
     analysis: str | None = None
@@ -135,7 +147,24 @@ class RunContext:
     test_results: list[dict[str, Any]] = field(default_factory=list)
     commands_run: list[dict[str, Any]] = field(default_factory=list)
     security_findings: list[dict[str, Any]] = field(default_factory=list)
-    secret_findings: list[dict[str, Any]] = field(default_factory=list)
+    secret_findings: list[Any] = field(default_factory=list)
     approvals: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
+    memory_notes: list[dict[str, Any]] = field(default_factory=list)  # advisory facts chosen for this run (see runtime.run_memory)
+    # --- validated-patch pipeline ---
+    context_provenance: list[dict[str, Any]] = field(default_factory=list)
+    patch_summary: list[dict[str, Any]] = field(default_factory=list)  # per-file action/added/removed
+    repair_rounds: int = 0
+    baseline_results: list[dict[str, Any]] = field(default_factory=list)
+    verdict: str | None = None  # passed | failed | no_tests | pre_existing_failure
+    outcome: str | None = None  # applied | rejected | conflict | no_changes | read_only | blocked
+    review: dict[str, Any] | None = None
+    workspace_path: str | None = None
+    model_calls: int = 0
+    tokens_used: int = 0
+    retries: int = 0
+    wall_seconds: float = 0.0  # active time, accumulated across attempts
+    patch_attempts: int = 0
+    # Set by the state machine so roles can publish timeline events without importing it.
+    event_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = field(default=None, repr=False, compare=False)

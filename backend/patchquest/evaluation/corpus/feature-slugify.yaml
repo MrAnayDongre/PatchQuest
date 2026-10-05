@@ -1,0 +1,58 @@
+schema: 1
+id: feature-slugify
+category: feature
+difficulty: easy
+task: Add a slugify(text) function to textutils.py that lowercases the text, replaces runs of non-alphanumeric
+  characters with a single hyphen and strips leading/trailing hyphens.
+files:
+  textutils.py: |
+    def shout(text):
+        return text.upper()
+  tests/test_textutils.py: |
+    import os, sys, unittest
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from textutils import slugify
+
+
+    class T(unittest.TestCase):
+        def test_basic(self):
+            self.assertEqual(slugify("Hello, World!"), "hello-world")
+test_command: python3 -m unittest discover -s tests -q
+oracle:
+  command: python3 -m unittest discover -s tests -q
+  files:
+    tests/test_textutils_oracle.py: |
+      import os, sys, unittest
+      sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+      from textutils import shout, slugify
+
+
+      class O(unittest.TestCase):
+          def test_edge_cases(self):
+              self.assertEqual(slugify("  --Many   spaces & symbols__ "), "many-spaces-symbols")
+              self.assertEqual(slugify("Already-a-slug"), "already-a-slug")
+              self.assertEqual(slugify("***"), "")
+
+          def test_existing_function_untouched(self):
+              self.assertEqual(shout("a"), "A")
+solution:
+  files_to_inspect:
+  - textutils.py
+  edits:
+  - path: textutils.py
+    search: |
+      def shout(text):
+          return text.upper()
+    replace: |
+      import re
+
+
+      def shout(text):
+          return text.upper()
+
+
+      def slugify(text):
+          return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+  create: []

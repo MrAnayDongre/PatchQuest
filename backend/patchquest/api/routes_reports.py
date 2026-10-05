@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
 
+from fastapi import APIRouter, Depends, HTTPException
+
+from patchquest.api.auth import RunAccess, run_access
 from patchquest.api.schemas import ReportResponse
 from patchquest.database import get_db, now_iso
+from patchquest.domain.identity import Permission
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
 @router.get("/{run_id}", response_model=ReportResponse)
-async def get_report(run_id: str) -> ReportResponse:
+async def get_report(access: Annotated[RunAccess, Depends(run_access(Permission.RUN_READ))]) -> ReportResponse:
+    run_id = access.run["id"]
     with get_db() as conn:
         r = conn.execute("SELECT * FROM reports WHERE run_id = ?", (run_id,)).fetchone()
     if r:

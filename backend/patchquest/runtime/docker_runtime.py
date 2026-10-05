@@ -5,15 +5,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
 from patchquest.config import get_config
+from patchquest.execution.executor import run_argv, scrubbed_env
 from patchquest.memory.repo_indexer import IGNORED_DIRS
+from patchquest.runtime import workspace as workspace_mod  # single source of truth for the base directory
 from patchquest.runtime.sandbox_base import RuntimeBase
-from patchquest.tools.secret_guard import redact_secrets
-
-SANDBOX_BASE = Path.home() / ".patchquest" / "sandboxes"
 
 COPY_EXCLUDE_DIRS = IGNORED_DIRS | {".env", ".env.local", ".env.production"}
 
@@ -30,7 +31,8 @@ class DockerRuntime(RuntimeBase):
         self.repo_path = repo_path
         self._sandbox_path: Path | None = None
 
-    def run_command(self, command: str, cwd: str, timeout: int = 60) -> dict[str, Any]:
+    def run_command(self, command: str, cwd: str, timeout: int = 60,
+                    cancel: threading.Event | None = None) -> dict[str, Any]:
         if not self.is_available():
             return {
                 "success": False, "returncode": -1,
@@ -39,23 +41,9 @@ class DockerRuntime(RuntimeBase):
             }
 
         config = get_config()
-        docker_cfg = getattr(config, "runtime", None)
-        image = "patchquest-sandbox:latest"
-        memory = "2g"
-        cpus = "2"
-        pids_limit = "512"
-        network = False
+        dc = config.runtime.docker
+        timeout = dc.timeout_seconds or timeout or config.safety.max_command_timeout
         output_limit = config.safety.max_output_bytes
-
-        if docker_cfg and hasattr(docker_cfg, "docker"):
-            dc = docker_cfg.docker
-            image = getattr(dc, "image", image)
-            memory = getattr(dc, "memory", memory)
-            cpus = str(getattr(dc, "cpus", cpus))
-            pids_limit = str(getattr(dc, "pids_limit", pids_limit))
-            network = getattr(dc, "network", False)
-            timeout = getattr(dc, "timeout_seconds", timeout)
-            output_limit = getattr(dc, "output_limit_bytes", output_limit)
 
         workspace = self._get_sandbox_workspace()
         if not workspace.exists():
@@ -65,48 +53,30 @@ class DockerRuntime(RuntimeBase):
                 "truncated": False,
             }
 
+        name = f"pq-{self.run_id[:12]}-{uuid.uuid4().hex[:8]}"
         docker_cmd = build_docker_command(
             command=command,
             workspace=str(workspace),
-            image=image,
-            memory=memory,
-            cpus=cpus,
-            pids_limit=pids_limit,
-            network=network,
+            image=dc.image,
+            memory=dc.memory,
+            cpus=dc.cpus,
+            pids_limit=str(dc.pids_limit),
+            network=dc.network,
             timeout=timeout,
+            name=name,
+            tmpfs_size=dc.tmpfs_size,
+            read_only=dc.read_only_rootfs,
         )
 
-        try:
-            result = subprocess.run(
-                docker_cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout + 10,
-            )
-            stdout = result.stdout[:output_limit] if result.stdout else ""
-            stderr = result.stderr[:output_limit] if result.stderr else ""
-            stdout = redact_secrets(stdout)
-            stderr = redact_secrets(stderr)
-
-            return {
-                "success": result.returncode == 0,
-                "returncode": result.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "truncated": len(result.stdout or "") > output_limit,
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False, "returncode": -1,
-                "stdout": "", "stderr": f"Docker command timed out after {timeout}s",
-                "truncated": False,
-            }
-        except Exception as e:
-            return {
-                "success": False, "returncode": -1,
-                "stdout": "", "stderr": f"Docker execution error: {e}",
-                "truncated": False,
-            }
+        # The docker CLI runs through the bounded, process-group-aware executor. If it times out the
+        # CLI is killed, but that does not stop the container, so the container is removed explicitly.
+        result = run_argv(docker_cmd, cwd=str(workspace), timeout=timeout + 10, max_output=output_limit,
+                          env=scrubbed_env(passthrough=("DOCKER_*", "XDG_RUNTIME_DIR")), cancel=cancel)
+        if result.get("timed_out") or result.get("cancelled"):
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30, check=False)
+            result["stderr"] = (f"Docker command timed out after {timeout}s; container removed" if result.get("timed_out")
+                                else "Docker command was cancelled; container removed")
+        return result
 
     def is_available(self) -> bool:
         return check_docker_available()
@@ -144,7 +114,7 @@ class DockerRuntime(RuntimeBase):
         if not workspace.exists():
             return True
         resolved = workspace.resolve()
-        if not str(resolved).startswith(str(SANDBOX_BASE.resolve())):
+        if not resolved.is_relative_to(workspace_mod.WORKSPACE_BASE.resolve()):
             return False
         try:
             shutil.rmtree(workspace)
@@ -154,7 +124,7 @@ class DockerRuntime(RuntimeBase):
 
     def _get_sandbox_workspace(self) -> Path:
         if self._sandbox_path is None:
-            self._sandbox_path = SANDBOX_BASE / self.run_id / "workspace"
+            self._sandbox_path = workspace_mod.WORKSPACE_BASE / self.run_id / "workspace"
         return self._sandbox_path
 
 
@@ -197,18 +167,39 @@ def build_docker_command(
     image: str = "patchquest-sandbox:latest",
     memory: str = "2g",
     cpus: str = "2",
-    pids_limit: str = "512",
+    pids_limit: str = "256",
     network: bool = False,
     timeout: int = 120,
+    name: str | None = None,
+    tmpfs_size: str = "512m",
+    read_only: bool = True,
 ) -> list[str]:
-    cmd = [
-        "docker", "run", "--rm",
+    """Build the ``docker run`` argv. The workspace is the only host path that is mounted.
+
+    Hardening: no capabilities, no privilege escalation, optional read-only root filesystem (a small
+    noexec tmpfs provides /tmp), memory without swap, bounded pids, no network unless enabled, and the
+    caller's uid:gid so files written to the workspace stay owned by the user. Host environment
+    variables are never forwarded.
+    """
+    cmd = ["docker", "run", "--rm"]
+    if name:
+        cmd += ["--name", name]
+    cmd += [
         "--memory", memory,
+        "--memory-swap", memory,
         "--cpus", cpus,
         "--pids-limit", pids_limit,
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "-e", "PYTHONDONTWRITEBYTECODE=1",
+        "-e", "HOME=/tmp",
         "-v", f"{workspace}:/workspace",
         "-w", "/workspace",
     ]
+    if read_only:
+        cmd += ["--read-only", "--tmpfs", f"/tmp:rw,noexec,nosuid,size={tmpfs_size}"]  # noqa: S108 - container tmpfs
+    if hasattr(os, "getuid"):
+        cmd += ["--user", f"{os.getuid()}:{os.getgid()}"]
 
     if not network:
         cmd.append("--network=none")
@@ -221,23 +212,10 @@ def build_docker_command(
 
 
 def _copy_repo_to_sandbox(source: Path, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
+    """Kept for callers; the implementation is the symlink-safe ``runtime.workspace.copy_repo``."""
+    from patchquest.runtime.workspace import copy_repo
 
-    for item in source.iterdir():
-        if item.name in COPY_EXCLUDE_DIRS:
-            continue
-        if item.is_file() and _should_exclude_file(item):
-            continue
-
-        target = dest / item.name
-        if item.is_dir():
-            shutil.copytree(
-                item, target,
-                ignore=shutil.ignore_patterns(*COPY_EXCLUDE_DIRS, "*.env", "*.env.*"),
-                dirs_exist_ok=True,
-            )
-        else:
-            shutil.copy2(item, target)
+    copy_repo(source, dest)
 
 
 def _should_exclude_file(path: Path) -> bool:

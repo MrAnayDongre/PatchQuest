@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "git_sha": "b2cbaae",
+  "timestamp": "2026-10-03T04:16:10.304197+00:00",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) Ultra 7 255HX",
+    "cores": 20,
+    "memory_gb": 30.8,
+    "platform": "Linux-7.0.0-34-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "config": {
+    "orgs": 1000,
+    "users_per_org": 5,
+    "runs": 10000,
+    "events_per_run": 40,
+    "api_samples": 400,
+    "queue_runs": 2000,
+    "hot_fraction": 0.3
+  },
+  "seed": {
+    "identity_s": 0.05,
+    "runs_and_events_s": 2.41,
+    "events": 400000,
+    "orgs": 1000,
+    "runs": 10000,
+    "hot_tenant_runs": 3340
+  },
+  "api": {
+    "list_runs": {
+      "n": 400,
+      "p50_ms": 2.5,
+      "p95_ms": 5.458,
+      "max_ms": 24.512,
+      "mean_ms": 2.985
+    },
+    "get_run": {
+      "n": 400,
+      "p50_ms": 3.722,
+      "p95_ms": 7.298,
+      "max_ms": 24.63,
+      "mean_ms": 3.952
+    },
+    "events_page": {
+      "n": 400,
+      "p50_ms": 3.798,
+      "p95_ms": 8.111,
+      "max_ms": 21.35,
+      "mean_ms": 4.357
+    },
+    "metrics_7d": {
+      "n": 400,
+      "p50_ms": 2.823,
+      "p95_ms": 5.862,
+      "max_ms": 42.208,
+      "mean_ms": 3.389
+    },
+    "approvals": {
+      "n": 400,
+      "p50_ms": 3.735,
+      "p95_ms": 8.132,
+      "max_ms": 54.111,
+      "mean_ms": 4.357
+    },
+    "authenticate_only": {
+      "n": 400,
+      "p50_ms": 2.082,
+      "p95_ms": 4.395,
+      "max_ms": 21.208,
+      "mean_ms": 2.495
+    }
+  },
+  "api_hot_tenant": {
+    "list_runs": {
+      "n": 400,
+      "p50_ms": 2.691,
+      "p95_ms": 3.911,
+      "max_ms": 14.47,
+      "mean_ms": 2.973
+    },
+    "get_run": {
+      "n": 400,
+      "p50_ms": 2.398,
+      "p95_ms": 3.327,
+      "max_ms": 15.009,
+      "mean_ms": 2.646
+    },
+    "events_page": {
+      "n": 400,
+      "p50_ms": 3.201,
+      "p95_ms": 4.524,
+      "max_ms": 18.591,
+      "mean_ms": 3.552
+    },
+    "metrics_7d": {
+      "n": 400,
+      "p50_ms": 29.467,
+      "p95_ms": 43.852,
+      "max_ms": 165.839,
+      "mean_ms": 33.325
+    },
+    "approvals": {
+      "n": 400,
+      "p50_ms": 3.991,
+      "p95_ms": 5.452,
+      "max_ms": 19.264,
+      "mean_ms": 4.258
+    },
+    "authenticate_only": {
+      "n": 400,
+      "p50_ms": 2.085,
+      "p95_ms": 3.0,
+      "max_ms": 14.611,
+      "mean_ms": 2.312
+    }
+  },
+  "queue": {
+    "single_claimer": {
+      "claimers": 1,
+      "runs": 1000,
+      "claims_per_s": 755.0,
+      "duplicates": 0,
+      "claim_latency": {
+        "n": 1000,
+        "p50_ms": 1.279,
+        "p95_ms": 1.598,
+        "max_ms": 3.355,
+        "mean_ms": 1.322
+      }
+    },
+    "concurrent_claimers": {
+      "claimers": 8,
+      "runs": 1000,
+      "claims_per_s": 2213.0,
+      "duplicates": 0,
+      "claim_latency": {
+        "n": 1000,
+        "p50_ms": 1.495,
+        "p95_ms": 9.514,
+        "max_ms": 231.808,
+        "mean_ms": 3.311
+      }
+    }
+  },
+  "ledger": {
+    "single_writer": {
+      "writers": 1,
+      "events": 500,
+      "events_per_s": 698.9,
+      "append_latency": {
+        "n": 500,
+        "p50_ms": 1.441,
+        "p95_ms": 1.711,
+        "max_ms": 4.399,
+        "mean_ms": 1.43
+      }
+    },
+    "concurrent_writers": {
+      "writers": 8,
+      "events": 1600,
+      "events_per_s": 1379.6,
+      "append_latency": {
+        "n": 1600,
+        "p50_ms": 5.651,
+        "p95_ms": 6.891,
+        "max_ms": 13.146,
+        "mean_ms": 5.642
+      }
+    }
+  },
+  "resources": {
+    "db_mb": 98.8,
+    "wal_mb": 0.0,
+    "rss_growth_mb": 32.7,
+    "cpu_s": 33.7
+  }
+}
