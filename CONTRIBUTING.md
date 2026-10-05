@@ -16,7 +16,7 @@ git clone https://github.com/MrAnayDongre/PatchQuest.git && cd PatchQuest
 # backend
 cd backend
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev,tree-sitter]"          # add ,server for the PostgreSQL driver
+pip install -e ".[dev,tree-sitter]"          # add ,server for PostgreSQL and the security tests (stored secrets need cryptography)
 
 # frontend (separate shell)
 cd frontend && npm ci
