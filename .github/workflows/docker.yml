@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t patchquest-sandbox:latest docker/sandbox
       - name: Sandbox has no network and no host credentials
         run: |
