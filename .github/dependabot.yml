@@ -3,14 +3,18 @@ updates:
   - package-ecosystem: pip
     directory: /backend
     schedule: { interval: monthly }
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     groups:
       python-dependencies:
         update-types: [minor, patch]
   - package-ecosystem: npm
     directory: /frontend
     schedule: { interval: monthly }
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
+    # Major upgrades (TypeScript, React, ...) are migrations to do deliberately, not unattended bumps.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-dependencies:
         update-types: [minor, patch]
