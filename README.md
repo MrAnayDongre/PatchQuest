@@ -19,13 +19,11 @@ isolated copy of your repository; your own tests validate them; policy or a pers
 append-only ledger with checkpoints. If the worker dies, another one picks the run up where it stopped, and the repository is
 written once or not at all. The same engine runs on a laptop with a local model, or as a team server on PostgreSQL.
 
-## See it
+<p align="center">
+  <img src="docs/assets/patchquest-demo.gif" alt="PatchQuest recovering an interrupted agent run from a checkpoint" width="960">
+</p>
 
-<!-- PATCHQUEST_DEMO_VIDEO: replace with GitHub user-attachment URL before launch -->
-[![Watch the PatchQuest demo](docs/assets/patchquest-demo.jpg)](docs/DEMO_QUALIFICATION.md)
-
-*The film is a 25-second tour of the demo environment. Until it is attached here, the poster links to the qualification record
-the film was made from.*
+<p align="center"><sub>Worker killed after checkpoint #6. PatchQuest recovered the run and applied the patch once. Demo environment: scripted models, simulated GitHub and Slack.</sub></p>
 
 ## Why PatchQuest?
 
